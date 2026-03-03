@@ -215,18 +215,22 @@ const AuthModal = ({ isOpen, onClose, onLogin, onRegister }) => {
 const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite }) => {
   const getIngredientStatus = (ingredient) => {
     const pantryItem = pantryItems.find(item => item.name === ingredient.name);
-    if (!pantryItem || pantryItem.quantity === 0) return { 
-      status: 'missing', 
-      color: 'bg-gray-200 text-gray-700' 
+    if (!pantryItem || pantryItem.quantity === 0) return {
+      status: 'missing',
+      color: 'bg-gray-200 text-gray-700'
     };
-    if (pantryItem.quantity >= ingredient.amount) return { 
-      status: 'available', 
-      color: 'bg-green-200 text-green-800' 
+
+    // Convert pantry quantity to the unit used by the ingredient for comparison
+    const availableInIngredientUnit = convertQuantity(pantryItem.quantity, pantryItem.measure, ingredient.measure);
+    if (availableInIngredientUnit >= ingredient.amount) return {
+      status: 'available',
+      color: 'bg-green-200 text-green-800'
     };
-    return { 
-      status: 'partial', 
-      color: 'bg-orange-200 text-orange-800', 
-      available: pantryItem.quantity 
+
+    return {
+      status: 'partial',
+      color: 'bg-orange-200 text-orange-800',
+      available: availableInIngredientUnit
     };
   };
 
@@ -522,6 +526,49 @@ const OlivierApp = () => {
     ];
   };
 
+  // Unit conversion helpers
+  const UNIT_MAP = {
+    'г.': { type: 'mass', factor: 1 },      // base: grams
+    'кг.': { type: 'mass', factor: 1000 },  // kilograms -> grams
+    'мл.': { type: 'volume', factor: 1 },   // base: milliliters
+    'л.': { type: 'volume', factor: 1000 }, // liters -> milliliters
+    'шт.': { type: 'count', factor: 1 }
+  };
+
+  const convertQuantity = (quantity, fromMeasure, toMeasure) => {
+    if (!fromMeasure || !toMeasure || fromMeasure === toMeasure) return quantity;
+    const from = UNIT_MAP[fromMeasure] || { type: 'count', factor: 1 };
+    const to = UNIT_MAP[toMeasure] || { type: 'count', factor: 1 };
+    if (from.type !== to.type) {
+      // incompatible types (mass vs volume etc.) — don't convert
+      return quantity;
+    }
+    return (quantity * from.factor) / to.factor;
+  };
+
+  const getStepDecimals = (step) => {
+    const s = String(step);
+    if (!s.includes('.')) return 0;
+    return s.split('.')[1].length;
+  };
+
+  const roundToStep = (quantity, step) => {
+    if (!isFinite(quantity) || !isFinite(step) || step === 0) return quantity;
+    const rounded = Math.round(quantity / step) * step;
+    const decimals = getStepDecimals(step);
+    return Number(rounded.toFixed(decimals));
+  };
+
+  const getQuantityStep = (measure) => {
+    // sensible defaults per unit
+    if (measure === 'л.') return 0.1;   // 100 ml
+    if (measure === 'мл.') return 50;   // 50 ml
+    if (measure === 'кг.') return 0.1;  // 100 g
+    if (measure === 'г.') return 10;    // 10 g
+    if (measure === 'шт.') return 1;
+    return 1;
+  };
+
   // Загрузка состояния пользователя (сначала локально, затем при наличии — из Supabase)
   useEffect(() => {
     const loadState = async () => {
@@ -776,8 +823,9 @@ const OlivierApp = () => {
     let skippedCount = 0;
     
     recipe.ingredients.forEach(ingredient => {
-      const pantryItem = pantryItems.find(item => item.name === ingredient.name);
-      const needed = ingredient.amount - (pantryItem ? pantryItem.quantity : 0);
+  const pantryItem = pantryItems.find(item => item.name === ingredient.name);
+  const pantryAvailable = pantryItem ? convertQuantity(pantryItem.quantity, pantryItem.measure, ingredient.measure) : 0;
+  const needed = ingredient.amount - pantryAvailable;
       
       if (needed > 0) {
         // Проверяем, есть ли уже такой продукт в корзине
@@ -837,10 +885,11 @@ const OlivierApp = () => {
       const existingPantryItem = pantryItems.find(pantryItem => pantryItem.name === item.name);
       
       if (existingPantryItem) {
-        // Увеличиваем количество существующего продукта
+        // Увеличиваем количество существующего продукта — конвертируем меру при необходимости
+        const addedQty = convertQuantity(item.quantity, item.measure, existingPantryItem.measure);
         const updatedPantryItems = pantryItems.map(pantryItem =>
           pantryItem.name === item.name
-            ? { ...pantryItem, quantity: pantryItem.quantity + item.quantity }
+            ? { ...pantryItem, quantity: pantryItem.quantity + addedQty }
             : pantryItem
         );
         setPantryItems(updatedPantryItems);
@@ -959,8 +1008,9 @@ const OlivierApp = () => {
   const getIngredientStatus = (ingredient) => {
     const pantryItem = pantryItems.find(item => item.name === ingredient.name);
     if (!pantryItem) return { status: 'missing', color: 'text-red-500' };
-    if (pantryItem.quantity >= ingredient.amount) return { status: 'available', color: 'text-green-500' };
-    return { status: 'partial', color: 'text-yellow-500', available: pantryItem.quantity };
+    const availableInIngredientUnit = convertQuantity(pantryItem.quantity, pantryItem.measure, ingredient.measure);
+    if (availableInIngredientUnit >= ingredient.amount) return { status: 'available', color: 'text-green-500' };
+    return { status: 'partial', color: 'text-yellow-500', available: availableInIngredientUnit };
   };
 
   const addMissingIngredientsToCart = (recipe) => {
@@ -988,20 +1038,6 @@ const OlivierApp = () => {
   };
 
   const hasExpiredItems = pantryItems.some(item => item.expiryDate < new Date());
-
-  const getQuantityStep = (measure) => {
-    if (measure === 'л.') return 0.2;
-    if (measure === 'г.' || measure === 'кг.') return measure === 'кг.' ? 0.1 : 100;
-    return 0.5;
-  };
-
-  const adjustQuantity = (currentQuantity, measure, increment) => {
-    const step = getQuantityStep(measure);
-    const newQuantity = increment 
-      ? currentQuantity + step 
-      : Math.max(step, currentQuantity - step);
-    return Math.round(newQuantity * 10) / 10;
-  };
 
   // Функция для группировки продуктов по категориям
   const groupItemsByCategory = (items) => {
