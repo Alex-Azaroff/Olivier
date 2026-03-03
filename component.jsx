@@ -814,7 +814,10 @@ const OlivierApp = () => {
     // If product exists in DB but user selected a different measure in the form,
     // respect user's measure and convert quantity to the stored measure (or store with user's measure).
     let measureToStore = selectedProduct.measure;
-    let qtyToStore = addFormData.quantity;
+    // Allow the input to be an empty/partial string while typing; only coerce to number when storing
+    let qtyToStore = Number(addFormData.quantity);
+    const defaultStep = getQuantityStep(addFormData.measure || selectedProduct.measure) || 1;
+    if (!isFinite(qtyToStore) || qtyToStore <= 0) qtyToStore = defaultStep;
     if (addFormData.measure) {
       // prefer to store the measure the user selected
       measureToStore = addFormData.measure;
@@ -1775,7 +1778,7 @@ const OlivierApp = () => {
                     step={getQuantityStep(addFormData.measure)}
                     min={getQuantityStep(addFormData.measure)}
                     value={addFormData.quantity}
-                    onChange={(e) => setAddFormData(prev => ({ ...prev, quantity: parseFloat(e.target.value) || 1 }))}
+                    onChange={(e) => setAddFormData(prev => ({ ...prev, quantity: e.target.value }))}
                     className="flex-1 p-3 border border-gray-200 rounded-xl text-center"
                   />
                   <button
@@ -1898,7 +1901,7 @@ const OlivierApp = () => {
                     step={getQuantityStep(editFormData.measure || editingItem.measure)}
                     min={getQuantityStep(editFormData.measure || editingItem.measure)}
                     value={editFormData.quantity}
-                    onChange={(e) => setEditFormData(prev => ({ ...prev, quantity: parseFloat(e.target.value) || 1 }))}
+                    onChange={(e) => setEditFormData(prev => ({ ...prev, quantity: e.target.value }))}
                     className="flex-1 p-3 border border-gray-200 rounded-xl text-center"
                   />
                   <button
@@ -1952,7 +1955,7 @@ const OlivierApp = () => {
                         ? {
                             ...item,
                             name: editFormData.name,
-                            quantity: editFormData.quantity,
+                            quantity: Number(editFormData.quantity) || item.quantity,
                             measure: editFormData.measure || item.measure,
                             expiryDate: new Date(editFormData.expiryDate),
                             autoFilled: false
@@ -1965,7 +1968,7 @@ const OlivierApp = () => {
                         ? {
                             ...item,
                             name: editFormData.name,
-                            quantity: editFormData.quantity,
+                            quantity: Number(editFormData.quantity) || item.quantity,
                             measure: editFormData.measure || item.measure
                           }
                         : item
