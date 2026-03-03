@@ -1208,8 +1208,8 @@ const OlivierApp = () => {
         </h1>
       </div>
 
-      {/* Content */}
-      <div className="p-4">
+  {/* Content */}
+  <div className="p-4 pb-28" ref={contentRef}>
         {/* Main Content */}
         <div className="space-y-4">
           {currentTab === 'pantry' && (
