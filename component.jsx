@@ -702,15 +702,34 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const safeProducts = Array.isArray(products) ? products : [];
+  const normalizeForSearch = (s) => {
+    if (!s && s !== 0) return '';
+    try {
+      return String(s)
+        .toLowerCase()
+        .normalize('NFKD')
+        // replace non-letter/number with space
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim();
+    } catch (e) {
+      return String(s).toLowerCase();
+    }
+  };
 
   const handleChange = (e) => {
-    const inputValue = e.target.value;
+    const inputValue = e.target.value || '';
     onChange(inputValue);
 
-    if (inputValue.length > 0) {
+    const query = normalizeForSearch(inputValue);
+
+    if (query.length > 0) {
       const filtered = safeProducts
-        .filter(product => product && product.name && product.name.toLowerCase().includes(inputValue.toLowerCase()))
-        .slice(0, 6);
+        .filter(product => {
+          if (!product || !product.name) return false;
+          const nameNorm = normalizeForSearch(product.name);
+          return nameNorm.includes(query);
+        })
+        .slice(0, 12);
       setSuggestions(filtered);
       setShowSuggestions(filtered.length > 0);
     } else {
