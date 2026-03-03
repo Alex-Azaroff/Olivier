@@ -535,15 +535,34 @@ const OlivierApp = () => {
     'шт.': { type: 'count', factor: 1 }
   };
 
+  const normalizeMeasure = (m) => {
+    if (!m) return '';
+    const s = String(m).trim().toLowerCase();
+    // normalize common variants
+    if (s === 'г' || s === 'g') return 'г.';
+    if (s === 'кг' || s === 'kg') return 'кг.';
+    if (s === 'л' || s === 'l') return 'л.';
+    if (s === 'мл' || s === 'ml') return 'мл.';
+    if (s === 'шт' || s === 'pcs') return 'шт.';
+    // already normalized or unknown
+    return s.endsWith('.') ? s : s + (s === '' ? '' : '.');
+  };
+
   const convertQuantity = (quantity, fromMeasure, toMeasure) => {
-    if (!fromMeasure || !toMeasure || fromMeasure === toMeasure) return quantity;
-    const from = UNIT_MAP[fromMeasure] || { type: 'count', factor: 1 };
-    const to = UNIT_MAP[toMeasure] || { type: 'count', factor: 1 };
-    if (from.type !== to.type) {
-      // incompatible types (mass vs volume etc.) — don't convert
+    try {
+      const q = Number(quantity);
+      if (!isFinite(q)) return 0;
+      const fromN = normalizeMeasure(fromMeasure);
+      const toN = normalizeMeasure(toMeasure);
+      if (!fromN || !toN || fromN === toN) return q;
+      const from = UNIT_MAP[fromN] || { type: 'count', factor: 1 };
+      const to = UNIT_MAP[toN] || { type: 'count', factor: 1 };
+      if (from.type !== to.type) return q; // incompatible types
+      return (q * from.factor) / to.factor;
+    } catch (e) {
+      console.error('convertQuantity error', e, quantity, fromMeasure, toMeasure);
       return quantity;
     }
-    return (quantity * from.factor) / to.factor;
   };
 
   const getStepDecimals = (step) => {
