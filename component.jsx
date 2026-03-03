@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText } from 'lucide-react';
+import { supabase } from './src/supabaseClient';
+import { RECIPES_DB } from './src/data/recipes';
 
 // Sample product database (1000 products simulated with 50 for demo)
 const PRODUCTS_DB = [
@@ -28,50 +30,6 @@ const PRODUCTS_DB = [
   { name: 'Свинина', category: '🥩 Мясо', measure: 'кг.', shelfLife: 3 },
   { name: 'Яйца', category: '🥚 Яйца', measure: 'шт.', shelfLife: 21 },
   { name: 'Рыба', category: '🐟 Рыба', measure: 'кг.', shelfLife: 2 }
-];
-
-// Sample recipes database (300 recipes simulated with 10 for demo)
-const RECIPES_DB = [
-  {
-    id: 1,
-    name: 'Омлет с овощами',
-    difficulty: 'легкий',
-    time: 15,
-    ingredients: [
-      { name: 'Яйца', amount: 3, measure: 'шт.' },
-      { name: 'Молоко', amount: 0.1, measure: 'л.' },
-      { name: 'Помидоры', amount: 0.2, measure: 'кг.' },
-      { name: 'Лук', amount: 0.1, measure: 'кг.' }
-    ],
-    steps: ['Взбить яйца с молоком', 'Нарезать овощи', 'Жарить на сковороде 5 минут'],
-    image: 'assets/omelet.jpeg?prompt=delicious%20vegetable%20omelet%20on%20plate'
-  },
-  {
-    id: 2,
-    name: 'Рисовая каша',
-    difficulty: 'легкий',
-    time: 20,
-    ingredients: [
-      { name: 'Рис', amount: 200, measure: 'г.' },
-      { name: 'Молоко', amount: 0.5, measure: 'л.' },
-      { name: 'Сахар', amount: 50, measure: 'г.' }
-    ],
-    steps: ['Промыть рис', 'Варить в молоке 15 минут', 'Добавить сахар'],
-    image: 'assets/rice-porridge.jpeg?prompt=creamy%20rice%20porridge%20in%20bowl'
-  },
-  {
-    id: 3,
-    name: 'Салат с огурцами',
-    difficulty: 'легкий',
-    time: 10,
-    ingredients: [
-      { name: 'Огурцы', amount: 0.5, measure: 'кг.' },
-      { name: 'Помидоры', amount: 0.3, measure: 'кг.' },
-      { name: 'Лук', amount: 0.1, measure: 'кг.' }
-    ],
-    steps: ['Нарезать овощи', 'Перемешать', 'Посолить по вкусу'],
-    image: 'assets/vegetable-salad.jpeg?prompt=fresh%20cucumber%20tomato%20salad'
-  }
 ];
 
 // Компонент для поля с автозаполнением
@@ -404,20 +362,13 @@ const formatTextWithLineBreaks = (text, maxLength = 15) => {
 };
 
 const OlivierApp = () => {
-  const [user, setUser] = useState(null);
+  const tg = window.Telegram?.WebApp;
+  const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
+
   const [currentTab, setCurrentTab] = useState('pantry');
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pantryItems, setPantryItems] = useState([
-    {
-      id: 1,
-      name: 'Хлеб',
-      quantity: 1,
-      measure: 'шт.',
-      expiryDate: new Date('2024-12-15'), // просроченный продукт для демонстрации
-      category: '🍞 Хлебобулочные',
-      autoFilled: false
-    }
-  ]);
+  const [isLoadingState, setIsLoadingState] = useState(true);
+  const [stateError, setStateError] = useState(null);
+  const [pantryItems, setPantryItems] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([
     {
       id: 1,
@@ -497,6 +448,123 @@ const OlivierApp = () => {
     image: ''
   });
 
+  const createDefaultPantryItems = () => {
+    const now = Date.now();
+
+    const makeItem = (productName, quantity, measureOverride) => {
+      const product = PRODUCTS_DB.find(p => p.name === productName) || {
+        name: productName,
+        category: '🏷️ Прочее',
+        measure: measureOverride || 'шт.',
+        shelfLife: 7
+      };
+
+      const measure = measureOverride || product.measure;
+      const shelfLife = product.shelfLife || 7;
+      const expiryDate = new Date(now + shelfLife * 24 * 60 * 60 * 1000);
+
+      return {
+        id: Date.now() + Math.random(),
+        name: product.name,
+        category: product.category,
+        measure,
+        quantity,
+        expiryDate,
+        autoFilled: true
+      };
+    };
+
+    return [
+      makeItem('Рис', 1, 'кг.'),
+      makeItem('Молоко', 1.5, 'л.'),
+      makeItem('Яблоки', 3, 'шт.')
+    ];
+  };
+
+  // Загрузка состояния пользователя из Supabase при старте
+  useEffect(() => {
+    const loadState = async () => {
+      if (!supabase || !telegramUserId) {
+        // Локальный режим или нет Telegram ID — используем дефолтное наполнение кладовой
+        setPantryItems(createDefaultPantryItems());
+        setIsLoadingState(false);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('user_states')
+          .select('state')
+          .eq('telegram_user_id', telegramUserId)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Error loading state', error);
+          setStateError('Не удалось загрузить данные');
+        }
+
+        if (data && data.state) {
+          const state = data.state;
+
+          if (state.pantryItems) {
+            setPantryItems(state.pantryItems.map(item => ({
+              ...item,
+              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+            })));
+          }
+          if (state.shoppingItems) setShoppingItems(state.shoppingItems);
+          if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
+          if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
+          if (state.customRecipes) setCustomRecipes(state.customRecipes);
+        } else {
+          // Первый вход пользователя — заполняем кладовую дефолтными продуктами
+          setPantryItems(createDefaultPantryItems());
+        }
+      } catch (e) {
+        console.error(e);
+        setStateError('Не удалось загрузить данные');
+      } finally {
+        setIsLoadingState(false);
+      }
+    };
+
+    loadState();
+  }, [telegramUserId]);
+
+  // Сохранение состояния пользователя в Supabase при изменениях
+  useEffect(() => {
+    if (!supabase || !telegramUserId || isLoadingState) return;
+
+    const saveState = async () => {
+      try {
+        const stateToSave = {
+          pantryItems: pantryItems.map(item => ({
+            ...item,
+            expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
+          })),
+          shoppingItems,
+          favoriteProducts,
+          favoriteRecipes,
+          customRecipes
+        };
+
+        await supabase
+          .from('user_states')
+          .upsert(
+            {
+              telegram_user_id: telegramUserId,
+              state: stateToSave
+            },
+            { onConflict: 'telegram_user_id' }
+          );
+      } catch (e) {
+        console.error('Error saving state', e);
+      }
+    };
+
+    saveState();
+  }, [telegramUserId, isLoadingState, pantryItems, shoppingItems, favoriteProducts, favoriteRecipes, customRecipes]);
+
   const showNotification = (message) => {
     setNotification(message);
     setTimeout(() => setNotification(''), 1000);
@@ -520,23 +588,6 @@ const OlivierApp = () => {
       setEditingDateProduct(null);
       showNotification('Срок годности обновлен!');
     }
-  };
-
-  const login = (credentials) => {
-    setUser({ name: credentials.username, email: credentials.email || 'user@example.com' });
-    setShowAuthModal(false);
-    showNotification('Добро пожаловать!');
-  };
-
-  const register = (userData) => {
-    setUser({ name: userData.username, email: userData.email });
-    setShowAuthModal(false);
-    showNotification('Регистрация успешна!');
-  };
-
-  const logout = () => {
-    setUser(null);
-    showNotification('Выход выполнен');
   };
 
   const handleProductSelect = (product) => {
@@ -983,16 +1034,16 @@ const OlivierApp = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {isLoadingState && (
+        <div className="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl px-6 py-4 shadow">
+            <div className="text-gray-700 font-medium">Загрузка данных...</div>
+          </div>
+        </div>
+      )}
       {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 flex items-center relative">
-        <button
-          onClick={() => setShowAuthModal(true)}
-          className="text-gray-600"
-        >
-          <User size={24} />
-        </button>
-        
-        <h1 className="text-lg font-semibold capitalize absolute left-1/2 transform -translate-x-1/2">
+      <div className="bg-white shadow-sm p-4 flex items-center justify-center relative">
+        <h1 className="text-lg font-semibold capitalize">
           {currentTab === 'pantry' && 'Кладовая'}
           {currentTab === 'favorites' && 'Избранное'}
           {currentTab === 'recipes' && 'Рецепты'}
@@ -1001,12 +1052,6 @@ const OlivierApp = () => {
             <span className="ml-2 text-orange-500">!</span>
           )}
         </h1>
-        
-        {user && (
-          <span className="text-sm text-gray-600 ml-auto">
-            {user.name}
-          </span>
-        )}
       </div>
 
       {/* Content */}
@@ -1139,7 +1184,7 @@ const OlivierApp = () => {
               
               {/* Панель управления */}
               {shoppingItems.length > 0 && (
-                <div className="flex items-center justify-between gap-3 bg-white rounded-xl p-4 shadow-sm mb-6">
+                <div className="flex flex-wrap items-stretch gap-3 bg-white rounded-xl p-4 shadow-sm mb-6">
                   <button
                     onClick={() => {
                       if (window.confirm('Удалить все товары из списка покупок?')) {
@@ -1147,7 +1192,7 @@ const OlivierApp = () => {
                         showNotification('Список покупок очищен');
                       }
                     }}
-                    className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2"
+                    className="flex-1 flex items-center justify-center gap-2 bg-red-500 text-white px-4 py-3 rounded-lg hover:bg-red-600 transition-colors"
                   >
                     <Trash2 size={16} />
                     Удалить всё
@@ -1155,7 +1200,7 @@ const OlivierApp = () => {
                   <button
                     onClick={moveCompletedItemsToPantry}
                     disabled={!shoppingItems.some(item => item.completed)}
-                    className={`px-6 py-3 rounded-lg flex items-center gap-2 font-semibold transition-colors ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-semibold transition-colors ${
                       shoppingItems.some(item => item.completed)
                         ? 'bg-green-500 text-white hover:bg-green-600 shadow-md'
                         : 'bg-gray-300 text-gray-500 cursor-not-allowed'
@@ -1177,7 +1222,7 @@ const OlivierApp = () => {
                         showNotification('Список скопирован в буфер обмена');
                       });
                     }}
-                    className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+                    className="flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition-colors"
                   >
                     <FileText size={16} />
                     Экспорт
@@ -1779,28 +1824,35 @@ const OlivierApp = () => {
             <img 
               src={selectedRecipe.image} 
               alt={selectedRecipe.name}
-              className="w-full h-48 rounded-xl object-cover mb-4"
+              className="w-full h-48 rounded-xl object-cover mb-3"
             />
+            
+            {selectedRecipe.description && (
+              <p className="text-sm text-gray-600 mb-3">
+                {selectedRecipe.description}
+              </p>
+            )}
             
             <div className="space-y-4">
               <div>
-                <h3 className="font-semibold mb-2">Информация</h3>
                 <p className="text-gray-600">Сложность: {selectedRecipe.difficulty}</p>
                 <p className="text-gray-600">Время: {selectedRecipe.time} мин</p>
               </div>
               
               <div>
-                <h3 className="font-semibold mb-2">Ингредиенты</h3>
-                {selectedRecipe.ingredients.map(ingredient => {
-                  const status = getIngredientStatus(ingredient);
-                  return (
-                    <div key={ingredient.name} className={`p-2 rounded ${status.color}`}>
-                      {ingredient.name}: {ingredient.amount} {ingredient.measure}
-                      {status.status === 'partial' && ` (есть ${status.available})`}
-                      {status.status === 'missing' && ' (нужно купить)'}
-                    </div>
-                  );
-                })}
+                <h3 className="font-semibold mb-2">Тебе понадобится:</h3>
+                <div className="space-y-1">
+                  {selectedRecipe.ingredients.map(ingredient => {
+                    const status = getIngredientStatus(ingredient);
+                    return (
+                      <div key={ingredient.name} className={`text-sm leading-snug ${status.color}`}>
+                        {ingredient.name}: {ingredient.amount} {ingredient.measure}
+                        {status.status === 'partial' && ` (есть ${status.available})`}
+                        {status.status === 'missing' && ' (нужно купить)'}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               
               <div className="flex gap-2 mb-4">
@@ -1825,42 +1877,6 @@ const OlivierApp = () => {
                   </div>
                 ))}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Auth Modal */}
-      <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)}
-        onLogin={login}
-        onRegister={register}
-      />
-
-      {/* User Menu */}
-      {user && showAuthModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Профиль</h2>
-              <button onClick={() => setShowAuthModal(false)} className="text-gray-500">
-                <X size={24} />
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <p className="font-semibold">{user.name}</p>
-                <p className="text-gray-600">{user.email}</p>
-              </div>
-              
-              <button
-                onClick={logout}
-                className="w-full bg-red-500 text-white p-3 rounded-xl font-semibold"
-              >
-                Выйти
-              </button>
             </div>
           </div>
         </div>
