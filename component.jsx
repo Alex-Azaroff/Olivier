@@ -485,6 +485,7 @@ const OlivierApp = () => {
   };
 
   const [currentTab, setCurrentTab] = useState('pantry');
+  const contentRef = useRef(null);
   const [isLoadingState, setIsLoadingState] = useState(true);
   const [stateError, setStateError] = useState(null);
   const [pantryItems, setPantryItems] = useState([]);
@@ -755,6 +756,13 @@ const OlivierApp = () => {
 
     setPantryItems(prev => [...prev, newItem]);
     showNotification(`${product.name} добавлен в кладовую`);
+    // scroll content to bottom so the newly added item is visible
+    try {
+      setTimeout(() => {
+        if (contentRef?.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
+        else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      }, 50);
+    } catch (e) { /* ignore */ }
   };
 
   const addToShopping = (product, quantity = 1) => {
@@ -780,6 +788,12 @@ const OlivierApp = () => {
 
     setShoppingItems(prev => [...prev, newItem]);
     showNotification(`${product.name} добавлен в список покупок`);
+    try {
+      setTimeout(() => {
+        if (contentRef?.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
+        else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      }, 50);
+    } catch (e) {}
   };
 
   const handleAddProduct = () => {
@@ -788,21 +802,35 @@ const OlivierApp = () => {
       return;
     }
 
-    const selectedProduct = PRODUCTS_DB.find(p => p.name === addFormData.name) || {
+    const foundProduct = PRODUCTS_DB.find(p => p.name === addFormData.name);
+    const selectedProduct = foundProduct || {
       name: addFormData.name,
       category: addFormData.category || '🏷️ Прочее',
       measure: addFormData.measure || 'шт.',
       shelfLife: 7
     };
 
+    // If product exists in DB but user selected a different measure in the form,
+    // respect user's measure and convert quantity to the stored measure (or store with user's measure).
+    let measureToStore = selectedProduct.measure;
+    let qtyToStore = addFormData.quantity;
+    if (addFormData.measure) {
+      // prefer to store the measure the user selected
+      measureToStore = addFormData.measure;
+      // if the DB product had a different measure and we want to keep DB measure, convert instead
+      // but better to store as user selected measure so we don't surprise the user
+    }
+    // Build a product object that uses the chosen measure
+    const productToUse = { ...selectedProduct, measure: measureToStore };
+
     const expiryDate = addFormData.expiryDate 
       ? new Date(addFormData.expiryDate)
       : new Date(Date.now() + selectedProduct.shelfLife * 24 * 60 * 60 * 1000);
 
     if (currentTab === 'pantry') {
-      addToPantry(selectedProduct, addFormData.quantity, expiryDate);
+      addToPantry(productToUse, qtyToStore, expiryDate);
     } else if (currentTab === 'shopping') {
-      addToShopping(selectedProduct, addFormData.quantity);
+      addToShopping(productToUse, qtyToStore);
     } else if (currentTab === 'favorites') {
       toggleFavoriteProduct(selectedProduct);
     }
