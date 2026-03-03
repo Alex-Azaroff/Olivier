@@ -1,4 +1,12 @@
-export const RECIPES_DB = [
+/*
+  Normalization rules for ingredient amounts to avoid leading-zero decimals:
+  - If measure is liters ('л.' or 'л') and amount < 1 => convert to milliliters ('мл.') by *1000.
+  - If measure is kilograms ('кг.' or 'кг') and amount < 1 => convert to grams ('г.') by *1000.
+  - If after conversion ml or g >= 1000 => convert back to liters/kg (divide by 1000) and keep up to 2 decimals.
+  - Other measures are left unchanged.
+*/
+
+const RAW_RECIPES = [
   {
     id: 1,
     name: 'Омлет с овощами',
@@ -41,4 +49,58 @@ export const RECIPES_DB = [
     image: '/assets/vegetable-salad.jpeg'
   }
 ];
+
+function roundIfNeeded(n) {
+  if (Number.isInteger(n)) return n;
+  // Keep up to 2 decimal places, but trim trailing zeros
+  return parseFloat(n.toFixed(2));
+}
+
+function normalizeIngredient(ing) {
+  let { name, amount, measure } = { ...ing };
+  const m = (measure || '').toLowerCase();
+
+  // handle liters
+  if (m.includes('л')) {
+    // convert fractions of liters to ml
+    if (amount > 0 && amount < 1) {
+      amount = Math.round(amount * 1000);
+      measure = 'мл.';
+    }
+    // if currently ml and >= 1000, convert to liters
+    if (measure && measure.toLowerCase().includes('мл')) {
+      if (amount >= 1000) {
+        amount = roundIfNeeded(amount / 1000);
+        measure = 'л.';
+      }
+    }
+  }
+
+  // handle kilograms
+  if (m.includes('кг')) {
+    if (amount > 0 && amount < 1) {
+      amount = Math.round(amount * 1000);
+      measure = 'г.';
+    }
+    if (measure && measure.toLowerCase().includes('г')) {
+      if (amount >= 1000) {
+        amount = roundIfNeeded(amount / 1000);
+        measure = 'кг.';
+      }
+    }
+  }
+
+  return { ...ing, amount, measure };
+}
+
+function normalizeIngredientsList(list) {
+  if (!Array.isArray(list)) return list;
+  return list.map(normalizeIngredient);
+}
+
+export const RECIPES_DB = RAW_RECIPES.map(r => ({
+  ...r,
+  ingredients: normalizeIngredientsList(r.ingredients)
+}));
+
 
