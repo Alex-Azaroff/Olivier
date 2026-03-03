@@ -365,6 +365,47 @@ const OlivierApp = () => {
   const tg = window.Telegram?.WebApp;
   const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
 
+  // LocalStorage key helper
+  const getLocalKey = (userId) => `olivier_state_${userId || 'anon'}`;
+
+  const loadLocalState = () => {
+    try {
+      const key = getLocalKey(telegramUserId);
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+
+      // convert expiryDate strings back to Date objects where present
+      if (parsed.pantryItems) {
+        parsed.pantryItems = parsed.pantryItems.map(item => ({
+          ...item,
+          expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+        }));
+      }
+      return parsed;
+    } catch (e) {
+      console.error('Error loading local state', e);
+      return null;
+    }
+  };
+
+  const saveLocalState = (stateObj) => {
+    try {
+      const key = getLocalKey(telegramUserId);
+      const toSave = JSON.parse(JSON.stringify(stateObj));
+      // ensure dates are stored as ISO strings
+      if (toSave.pantryItems) {
+        toSave.pantryItems = toSave.pantryItems.map(item => ({
+          ...item,
+          expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString() : null
+        }));
+      }
+      localStorage.setItem(key, JSON.stringify(toSave));
+    } catch (e) {
+      console.error('Error saving local state', e);
+    }
+  };
+
   const [currentTab, setCurrentTab] = useState('pantry');
   const [isLoadingState, setIsLoadingState] = useState(true);
   const [stateError, setStateError] = useState(null);
@@ -481,12 +522,23 @@ const OlivierApp = () => {
     ];
   };
 
-  // Загрузка состояния пользователя из Supabase при старте
+  // Загрузка состояния пользователя (сначала локально, затем при наличии — из Supabase)
   useEffect(() => {
     const loadState = async () => {
+      // Попробуем сначала загрузить локально (быстрый отклик при перезагрузке)
+      const local = loadLocalState();
+      if (local) {
+        if (local.pantryItems) setPantryItems(local.pantryItems);
+        if (local.shoppingItems) setShoppingItems(local.shoppingItems);
+        if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
+        if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+        if (local.customRecipes) setCustomRecipes(local.customRecipes);
+      }
+
+      // Если есть Supabase и Telegram ID — обновим состояние с сервера (при наличии)
       if (!supabase || !telegramUserId) {
-        // Локальный режим или нет Telegram ID — используем дефолтное наполнение кладовой
-        setPantryItems(createDefaultPantryItems());
+        // Нет удалённого хранения — если локального не было, заполним дефолтом
+        if (!local) setPantryItems(createDefaultPantryItems());
         setIsLoadingState(false);
         return;
       }
@@ -505,7 +557,6 @@ const OlivierApp = () => {
 
         if (data && data.state) {
           const state = data.state;
-
           if (state.pantryItems) {
             setPantryItems(state.pantryItems.map(item => ({
               ...item,
@@ -516,7 +567,7 @@ const OlivierApp = () => {
           if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
           if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
           if (state.customRecipes) setCustomRecipes(state.customRecipes);
-        } else {
+        } else if (!local) {
           // Первый вход пользователя — заполняем кладовую дефолтными продуктами
           setPantryItems(createDefaultPantryItems());
         }
@@ -531,9 +582,9 @@ const OlivierApp = () => {
     loadState();
   }, [telegramUserId]);
 
-  // Сохранение состояния пользователя в Supabase при изменениях
+  // Сохранение состояния пользователя локально и в Supabase (если доступен)
   useEffect(() => {
-    if (!supabase || !telegramUserId || isLoadingState) return;
+    if (isLoadingState) return;
 
     const saveState = async () => {
       try {
@@ -548,15 +599,21 @@ const OlivierApp = () => {
           customRecipes
         };
 
-        await supabase
-          .from('user_states')
-          .upsert(
-            {
-              telegram_user_id: telegramUserId,
-              state: stateToSave
-            },
-            { onConflict: 'telegram_user_id' }
-          );
+        // Always save locally so data survives page reloads even without Supabase/Telegram
+        saveLocalState(stateToSave);
+
+        // If Supabase and Telegram ID available, sync to server
+        if (supabase && telegramUserId) {
+          await supabase
+            .from('user_states')
+            .upsert(
+              {
+                telegram_user_id: telegramUserId,
+                state: stateToSave
+              },
+              { onConflict: 'telegram_user_id' }
+            );
+        }
       } catch (e) {
         console.error('Error saving state', e);
       }
