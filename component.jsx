@@ -91,6 +91,20 @@ const getQuantityStep = (measure) => {
   return 1;
 };
 
+const adjustQuantity = (currentQuantity, measure, increment) => {
+  try {
+    const step = getQuantityStep(measure);
+    let q = Number(currentQuantity);
+    if (!isFinite(q)) q = step;
+    let newQ = increment ? q + step : q - step;
+    if (newQ < step) newQ = step;
+    return roundToStep(newQ, step);
+  } catch (e) {
+    console.error('adjustQuantity error', e, currentQuantity, measure, increment);
+    return currentQuantity || getQuantityStep(measure);
+  }
+};
+
 
 // Компонент для поля с автозаполнением
 const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products }) => {
