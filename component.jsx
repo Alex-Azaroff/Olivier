@@ -32,6 +32,66 @@ const PRODUCTS_DB = [
   { name: 'Рыба', category: '🐟 Рыба', measure: 'кг.', shelfLife: 2 }
 ];
 
+// Unit conversion helpers (module-level so all components can use them)
+const UNIT_MAP = {
+  'г.': { type: 'mass', factor: 1 },      // base: grams
+  'кг.': { type: 'mass', factor: 1000 },  // kilograms -> grams
+  'мл.': { type: 'volume', factor: 1 },   // base: milliliters
+  'л.': { type: 'volume', factor: 1000 }, // liters -> milliliters
+  'шт.': { type: 'count', factor: 1 }
+};
+
+const normalizeMeasure = (m) => {
+  if (!m) return '';
+  const s = String(m).trim().toLowerCase();
+  if (s === 'г' || s === 'g') return 'г.';
+  if (s === 'кг' || s === 'kg') return 'кг.';
+  if (s === 'л' || s === 'l') return 'л.';
+  if (s === 'мл' || s === 'ml') return 'мл.';
+  if (s === 'шт' || s === 'pcs') return 'шт.';
+  return s.endsWith('.') ? s : s + (s === '' ? '' : '.');
+};
+
+const convertQuantity = (quantity, fromMeasure, toMeasure) => {
+  try {
+    const q = Number(quantity);
+    if (!isFinite(q)) return 0;
+    const fromN = normalizeMeasure(fromMeasure);
+    const toN = normalizeMeasure(toMeasure);
+    if (!fromN || !toN || fromN === toN) return q;
+    const from = UNIT_MAP[fromN] || { type: 'count', factor: 1 };
+    const to = UNIT_MAP[toN] || { type: 'count', factor: 1 };
+    if (from.type !== to.type) return q;
+    return (q * from.factor) / to.factor;
+  } catch (e) {
+    console.error('convertQuantity error', e, quantity, fromMeasure, toMeasure);
+    return quantity;
+  }
+};
+
+const getStepDecimals = (step) => {
+  const s = String(step);
+  if (!s.includes('.')) return 0;
+  return s.split('.')[1].length;
+};
+
+const roundToStep = (quantity, step) => {
+  if (!isFinite(quantity) || !isFinite(step) || step === 0) return quantity;
+  const rounded = Math.round(quantity / step) * step;
+  const decimals = getStepDecimals(step);
+  return Number(rounded.toFixed(decimals));
+};
+
+const getQuantityStep = (measure) => {
+  if (measure === 'л.') return 0.1;
+  if (measure === 'мл.') return 50;
+  if (measure === 'кг.') return 0.1;
+  if (measure === 'г.') return 10;
+  if (measure === 'шт.') return 1;
+  return 1;
+};
+
+
 // Компонент для поля с автозаполнением
 const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products }) => {
   const [suggestions, setSuggestions] = useState([]);
@@ -526,67 +586,7 @@ const OlivierApp = () => {
     ];
   };
 
-  // Unit conversion helpers
-  const UNIT_MAP = {
-    'г.': { type: 'mass', factor: 1 },      // base: grams
-    'кг.': { type: 'mass', factor: 1000 },  // kilograms -> grams
-    'мл.': { type: 'volume', factor: 1 },   // base: milliliters
-    'л.': { type: 'volume', factor: 1000 }, // liters -> milliliters
-    'шт.': { type: 'count', factor: 1 }
-  };
-
-  const normalizeMeasure = (m) => {
-    if (!m) return '';
-    const s = String(m).trim().toLowerCase();
-    // normalize common variants
-    if (s === 'г' || s === 'g') return 'г.';
-    if (s === 'кг' || s === 'kg') return 'кг.';
-    if (s === 'л' || s === 'l') return 'л.';
-    if (s === 'мл' || s === 'ml') return 'мл.';
-    if (s === 'шт' || s === 'pcs') return 'шт.';
-    // already normalized or unknown
-    return s.endsWith('.') ? s : s + (s === '' ? '' : '.');
-  };
-
-  const convertQuantity = (quantity, fromMeasure, toMeasure) => {
-    try {
-      const q = Number(quantity);
-      if (!isFinite(q)) return 0;
-      const fromN = normalizeMeasure(fromMeasure);
-      const toN = normalizeMeasure(toMeasure);
-      if (!fromN || !toN || fromN === toN) return q;
-      const from = UNIT_MAP[fromN] || { type: 'count', factor: 1 };
-      const to = UNIT_MAP[toN] || { type: 'count', factor: 1 };
-      if (from.type !== to.type) return q; // incompatible types
-      return (q * from.factor) / to.factor;
-    } catch (e) {
-      console.error('convertQuantity error', e, quantity, fromMeasure, toMeasure);
-      return quantity;
-    }
-  };
-
-  const getStepDecimals = (step) => {
-    const s = String(step);
-    if (!s.includes('.')) return 0;
-    return s.split('.')[1].length;
-  };
-
-  const roundToStep = (quantity, step) => {
-    if (!isFinite(quantity) || !isFinite(step) || step === 0) return quantity;
-    const rounded = Math.round(quantity / step) * step;
-    const decimals = getStepDecimals(step);
-    return Number(rounded.toFixed(decimals));
-  };
-
-  const getQuantityStep = (measure) => {
-    // sensible defaults per unit
-    if (measure === 'л.') return 0.1;   // 100 ml
-    if (measure === 'мл.') return 50;   // 50 ml
-    if (measure === 'кг.') return 0.1;  // 100 g
-    if (measure === 'г.') return 10;    // 10 g
-    if (measure === 'шт.') return 1;
-    return 1;
-  };
+  
 
   // Загрузка состояния пользователя (сначала локально, затем при наличии — из Supabase)
   useEffect(() => {
