@@ -91,6 +91,23 @@ const getQuantityStep = (measure) => {
   return 1;
 };
 
+// Format quantities for display: choose sensible decimals per measure and trim trailing zeros
+const formatQuantityForDisplay = (quantity, measure) => {
+  const q = Number(quantity);
+  if (!isFinite(q)) return '0';
+  const m = normalizeMeasure(measure);
+  // For small-unit integer measures show integer
+  if (m === 'г.' || m === 'мл.' || m === 'шт.' || m === 'уп.') {
+    return String(Math.round(q));
+  }
+
+  // For larger units (kg, l) show up to 3 decimals but trim trailing zeros
+  const decimals = 3;
+  const fixed = q.toFixed(decimals);
+  // remove trailing zeros and optional trailing dot
+  return fixed.replace(/\.0+$|(?<=\.[0-9]*?)0+$/g, '').replace(/\.$/, '');
+};
+
 const adjustQuantity = (currentQuantity, measure, increment) => {
   try {
     const step = getQuantityStep(measure);
@@ -369,7 +386,9 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
                   className={`text-xs px-2 py-1 rounded-full ${status.color}`}
                 >
                   {ingredient.name} {ingredient.amount}{ingredient.measure}
-                  {status.status === 'partial' && ` (-${(ingredient.amount - status.available).toFixed(1)})`}
+                  {status.status === 'partial' && (
+                    ` (нед: ${formatQuantityForDisplay(Math.max(0, ingredient.amount - (status.available || 0)), ingredient.measure)}${ingredient.measure})`
+                  )}
                 </span>
               );
             })}
