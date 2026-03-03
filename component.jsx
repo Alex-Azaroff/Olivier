@@ -20,7 +20,7 @@ const PRODUCTS_DB = [
   { name: 'Яблоки', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 14 },
   { name: 'Бананы', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 5 },
   { name: 'Апельсины', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 10 },
-  { name: 'Рис', category: '🌾 Крупы', measure: 'г.', shelfLife: 365 },
+  { name: 'Рис', category: '🌾 Крупы', measure: 'кг.', shelfLife: 365 },
   { name: 'Гречка', category: '🌾 Крупы', measure: 'г.', shelfLife: 365 },
   { name: 'Макароны', category: '🌾 Крупы', measure: 'г.', shelfLife: 730 },
   { name: 'Мука', category: '🌾 Крупы', measure: 'г.', shelfLife: 180 },
@@ -555,6 +555,7 @@ const OlivierApp = () => {
   const [editFormData, setEditFormData] = useState({
     name: '',
     quantity: 1,
+    measure: '',
     expiryDate: ''
   });
 
@@ -1236,28 +1237,30 @@ const OlivierApp = () => {
                                   <div className="flex items-center gap-2">
                                     <button
                                       onClick={() => {
-                                        setEditingItem(item);
-                                        setEditFormData({
-                                          name: item.name,
-                                          quantity: item.quantity,
-                                          expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                        });
-                                        setShowEditModal(true);
-                                      }}
+                                          setEditingItem(item);
+                                          setEditFormData({
+                                            name: item.name,
+                                            quantity: item.quantity,
+                                            measure: item.measure,
+                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
+                                          });
+                                          setShowEditModal(true);
+                                        }}
                                       className="font-semibold text-gray-900 capitalize hover:text-blue-600 transition-colors"
                                     >
                                       {item.name}
                                     </button>
                                     <button
                                       onClick={() => {
-                                        setEditingItem(item);
-                                        setEditFormData({
-                                          name: item.name,
-                                          quantity: item.quantity,
-                                          expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                        });
-                                        setShowEditModal(true);
-                                      }}
+                                          setEditingItem(item);
+                                          setEditFormData({
+                                            name: item.name,
+                                            quantity: item.quantity,
+                                            measure: item.measure,
+                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
+                                          });
+                                          setShowEditModal(true);
+                                        }}
                                       className="text-gray-400 hover:text-blue-600 transition-colors"
                                     >
                                       <Edit3 size={16} />
@@ -1439,6 +1442,7 @@ const OlivierApp = () => {
                               setEditFormData({
                                 name: item.name,
                                 quantity: item.quantity,
+                                measure: item.measure,
                                 expiryDate: ''
                               });
                               setShowEditModal(true);
@@ -1883,7 +1887,7 @@ const OlivierApp = () => {
                   <button
                     onClick={() => setEditFormData(prev => ({ 
                       ...prev, 
-                      quantity: adjustQuantity(prev.quantity, editingItem.measure, false) 
+                      quantity: adjustQuantity(prev.quantity, prev.measure || editingItem.measure, false) 
                     }))}
                     className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold"
                   >
@@ -1891,8 +1895,8 @@ const OlivierApp = () => {
                   </button>
                   <input
                     type="number"
-                    step={getQuantityStep(editingItem.measure)}
-                    min={getQuantityStep(editingItem.measure)}
+                    step={getQuantityStep(editFormData.measure || editingItem.measure)}
+                    min={getQuantityStep(editFormData.measure || editingItem.measure)}
                     value={editFormData.quantity}
                     onChange={(e) => setEditFormData(prev => ({ ...prev, quantity: parseFloat(e.target.value) || 1 }))}
                     className="flex-1 p-3 border border-gray-200 rounded-xl text-center"
@@ -1900,13 +1904,30 @@ const OlivierApp = () => {
                   <button
                     onClick={() => setEditFormData(prev => ({ 
                       ...prev, 
-                      quantity: adjustQuantity(prev.quantity, editingItem.measure, true) 
+                      quantity: adjustQuantity(prev.quantity, prev.measure || editingItem.measure, true) 
                     }))}
                     className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold"
                   >
                     +
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Мера измерения</label>
+                <select
+                  value={editFormData.measure}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, measure: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  <option value="">Выберите меру</option>
+                  <option value="кг.">кг.</option>
+                  <option value="г.">г.</option>
+                  <option value="л.">л.</option>
+                  <option value="мл.">мл.</option>
+                  <option value="шт.">шт.</option>
+                  <option value="уп.">уп.</option>
+                </select>
               </div>
 
               {currentTab === 'pantry' && (
@@ -1923,7 +1944,7 @@ const OlivierApp = () => {
                 </div>
               )}
 
-              <button
+                <button
                 onClick={() => {
                   if (currentTab === 'pantry') {
                     setPantryItems(prev => prev.map(item => 
@@ -1932,6 +1953,7 @@ const OlivierApp = () => {
                             ...item,
                             name: editFormData.name,
                             quantity: editFormData.quantity,
+                            measure: editFormData.measure || item.measure,
                             expiryDate: new Date(editFormData.expiryDate),
                             autoFilled: false
                           }
@@ -1943,7 +1965,8 @@ const OlivierApp = () => {
                         ? {
                             ...item,
                             name: editFormData.name,
-                            quantity: editFormData.quantity
+                            quantity: editFormData.quantity,
+                            measure: editFormData.measure || item.measure
                           }
                         : item
                     ));
