@@ -1703,26 +1703,52 @@ const OlivierApp = () => {
   };
 
   const addMissingIngredientsToCart = (recipe) => {
+    if (!recipe || !Array.isArray(recipe.ingredients)) {
+      showNotification('У рецепта нет ингредиентов');
+      return;
+    }
+
+    const normalizeName = (s) => {
+      try {
+        return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+      } catch (e) {
+        return String(s).toLowerCase().trim();
+      }
+    };
+
     let added = 0;
     recipe.ingredients.forEach(ingredient => {
+      if (!ingredient || !ingredient.name) return;
       const status = getIngredientStatus(ingredient);
-      if (status.status === 'missing') {
-        const product = PRODUCTS_DB.find(p => p.name === ingredient.name);
-        if (product) {
-          addToShopping(product, ingredient.amount);
+      const needQuantity = status.status === 'missing' ? ingredient.amount : (status.status === 'partial' ? Math.max(0, ingredient.amount - (status.available || 0)) : 0);
+      if (needQuantity <= 0) return;
+
+      // robust product lookup by normalized name (exact or includes)
+      const ingNameNorm = normalizeName(ingredient.name);
+      let product = PRODUCTS_DB.find(p => normalizeName(p.name) === ingNameNorm);
+      if (!product) {
+        product = PRODUCTS_DB.find(p => normalizeName(p.name).includes(ingNameNorm) || ingNameNorm.includes(normalizeName(p.name)));
+      }
+
+      if (product) {
+        // ensure quantity is a number
+        const qty = typeof needQuantity === 'number' ? needQuantity : parseFloat(needQuantity) || 0;
+        if (qty > 0) {
+          addToShopping(product, qty);
           added++;
         }
-      } else if (status.status === 'partial') {
-        const needed = ingredient.amount - status.available;
-        const product = PRODUCTS_DB.find(p => p.name === ingredient.name);
-        if (product) {
-          addToShopping(product, needed);
-          added++;
-        }
+      } else {
+        // fallback: create a minimal product object when not found
+        const fallback = { name: ingredient.name, measure: ingredient.measure || 'шт.' };
+        addToShopping(fallback, needQuantity);
+        added++;
       }
     });
+
     if (added > 0) {
       showNotification(`Добавлено ${added} ингредиентов в корзину`);
+    } else {
+      showNotification('Нет недостающих ингредиентов для добавления');
     }
   };
 
