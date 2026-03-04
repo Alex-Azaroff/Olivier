@@ -1188,7 +1188,7 @@ const OlivierApp = () => {
     ingredients: [],
     difficulty: 'легкий',
     time: 30,
-    steps: [''],
+    steps: [{ text: '', image: '' }],
     comments: '',
     image: ''
   });
@@ -1646,7 +1646,7 @@ const OlivierApp = () => {
     showNotification('Рецепт добавлен в "Мои рецепты"');
   };
 
-  const addCustomRecipe = () => {
+  const addCustomRecipe = async () => {
     if (editingRecipeId) {
       // Обновляем существующий рецепт
       const updatedRecipe = {
@@ -1663,9 +1663,57 @@ const OlivierApp = () => {
       setEditingRecipeId(null);
     } else {
       // Добавляем новый рецепт
+      // Try to upload images to Supabase (if configured). We'll keep data URLs if upload is not possible.
+      const toSave = { ...recipeFormData };
+      const uploadBucket = 'recipes';
+
+      const dataURLtoBlob = (dataurl) => {
+        const arr = dataurl.split(',');
+        const mime = arr[0].match(/:(.*?);/)[1];
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new Blob([u8arr], { type: mime });
+      };
+
+      try {
+        // Upload main image if it's a data URL
+        if (supabase && toSave.image && toSave.image.startsWith('data:')) {
+          const blob = dataURLtoBlob(toSave.image);
+          const filePath = `recipe-${Date.now()}-main.png`;
+          const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(filePath, blob, { upsert: true });
+          if (!uploadError) {
+            const { data: pub } = await supabase.storage.from(uploadBucket).getPublicUrl(filePath);
+            toSave.image = pub?.publicUrl || toSave.image;
+          }
+        }
+
+        // Steps images
+        if (supabase && Array.isArray(toSave.steps)) {
+          for (let i = 0; i < toSave.steps.length; i++) {
+            const step = toSave.steps[i];
+            if (step && step.image && typeof step.image === 'string' && step.image.startsWith('data:')) {
+              const blob = dataURLtoBlob(step.image);
+              const filePath = `recipe-${Date.now()}-step-${i}.png`;
+              const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(filePath, blob, { upsert: true });
+              if (!uploadError) {
+                const { data: pub } = await supabase.storage.from(uploadBucket).getPublicUrl(filePath);
+                toSave.steps[i] = { ...(toSave.steps[i] || {}), image: pub?.publicUrl || toSave.steps[i].image };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Image upload error', err);
+        showNotification('Не удалось загрузить изображения — будут сохранены локально.');
+      }
+
       const newRecipe = {
         id: Date.now(),
-        ...recipeFormData,
+        ...toSave,
         ingredients: recipeFormData.ingredients.filter(ing => ing.name && ing.amount > 0)
       };
       setCustomRecipes(prev => [...prev, newRecipe]);
@@ -1677,7 +1725,7 @@ const OlivierApp = () => {
       ingredients: [],
       difficulty: 'легкий',
       time: 30,
-      steps: [''],
+      steps: [{ text: '', image: '' }],
       comments: '',
       image: ''
     });
@@ -1688,7 +1736,9 @@ const OlivierApp = () => {
     setRecipeFormData({
       ...recipe,
       ingredients: recipe.ingredients.length > 0 ? recipe.ingredients : [{ name: '', amount: 1, measure: 'г.' }],
-      steps: recipe.steps.length > 0 ? recipe.steps : ['']
+      steps: recipe.steps && recipe.steps.length > 0
+        ? recipe.steps.map((s) => (typeof s === 'string' ? { text: s, image: '' } : s))
+        : [{ text: '', image: '' }]
     });
     setEditingRecipeId(recipe.id);
     setShowAddRecipeModal(true);
@@ -2700,12 +2750,26 @@ const OlivierApp = () => {
               
               <div>
                 <h3 className="font-semibold mb-2">Приготовление</h3>
-                {selectedRecipe.steps.map((step, index) => (
-                  <div key={index} className="mb-2">
-                    <span className="font-semibold">{index + 1}. </span>
-                    {step}
-                  </div>
-                ))}
+                {selectedRecipe.steps.map((step, index) => {
+                  const s = typeof step === 'string' ? { text: step, image: '' } : step || {};
+                  return (
+                    <div key={index} className="mb-3">
+                      <div className="flex gap-3 items-start">
+                        <div className="w-6 text-right font-semibold">{index + 1}.</div>
+                        <div className="flex-1">
+                          <div className="text-sm leading-snug">{s.text}</div>
+                          {s.image && (
+                            <img
+                              src={s.image}
+                              alt={`Шаг ${index + 1}`}
+                              className="mt-2 w-full max-w-xs object-cover rounded-lg border"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -2853,23 +2917,65 @@ const OlivierApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Этапы приготовления</label>
                 <div className="space-y-2">
                   {recipeFormData.steps.map((step, index) => (
-                    <div key={index} className="flex gap-2">
+                    <div key={index} className="flex gap-2 items-start">
                       <span className="text-sm text-gray-500 mt-3">{index + 1}.</span>
-                      <textarea
-                        value={step}
-                        onChange={(e) => {
-                          const newSteps = [...recipeFormData.steps];
-                          newSteps[index] = e.target.value;
-                          setRecipeFormData(prev => ({ ...prev, steps: newSteps }));
-                        }}
-                        className="flex-1 p-2 border border-gray-200 rounded-lg resize-none"
-                        rows="2"
-                        placeholder="Описание этапа"
-                      />
+                      <div className="flex-1">
+                        <textarea
+                          value={(step && step.text) || ''}
+                          onChange={(e) => {
+                            const newSteps = [...recipeFormData.steps];
+                            newSteps[index] = { ...(newSteps[index] || {}), text: e.target.value };
+                            setRecipeFormData(prev => ({ ...prev, steps: newSteps }));
+                          }}
+                          className="w-full p-2 border border-gray-200 rounded-lg resize-none"
+                          rows="2"
+                          placeholder="Описание этапа"
+                        />
+
+                        {step && step.image && (
+                          <div className="relative mt-2">
+                            <img src={step.image} alt={`Шаг ${index + 1}`} className="w-full max-w-xs h-28 object-cover rounded-lg border" />
+                            <button
+                              onClick={() => {
+                                const newSteps = [...recipeFormData.steps];
+                                newSteps[index] = { ...(newSteps[index] || {}), image: '' };
+                                setRecipeFormData(prev => ({ ...prev, steps: newSteps }));
+                              }}
+                              className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1"
+                              title="Удалить фото этапа"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        )}
+
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              if (file.size > 5 * 1024 * 1024) {
+                                showNotification('Файл слишком большой. Максимум 5MB.');
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                const newSteps = [...recipeFormData.steps];
+                                newSteps[index] = { ...(newSteps[index] || {}), image: event.target.result };
+                                setRecipeFormData(prev => ({ ...prev, steps: newSteps }));
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="w-full mt-2 p-2 border border-gray-200 rounded-lg file:mr-4 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-sm file:bg-gray-50"
+                        />
+                      </div>
+
                       <button
                         onClick={() => {
                           const newSteps = recipeFormData.steps.filter((_, i) => i !== index);
-                          setRecipeFormData(prev => ({ ...prev, steps: newSteps.length ? newSteps : [''] }));
+                          setRecipeFormData(prev => ({ ...prev, steps: newSteps.length ? newSteps : [{ text: '', image: '' }] }));
                         }}
                         className="text-red-500 hover:text-red-700 p-1"
                       >

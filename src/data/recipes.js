@@ -18,7 +18,11 @@ const RAW_RECIPES = [
       { name: 'Помидоры', amount: 0.2, measure: 'кг.' },
       { name: 'Лук', amount: 0.1, measure: 'кг.' }
     ],
-    steps: ['Взбить яйца с молоком', 'Нарезать овощи', 'Жарить на сковороде 5 минут'],
+    steps: [
+      { text: 'Взбить яйца с молоком', image: '' },
+      { text: 'Нарезать овощи', image: '' },
+      { text: 'Жарить на сковороде 5 минут', image: '' }
+    ],
     image: '/assets/omelet.jpeg'
   },
   {
@@ -31,7 +35,11 @@ const RAW_RECIPES = [
       { name: 'Молоко', amount: 0.5, measure: 'л.' },
       { name: 'Сахар', amount: 50, measure: 'г.' }
     ],
-    steps: ['Промыть рис', 'Варить в молоке 15 минут', 'Добавить сахар'],
+    steps: [
+      { text: 'Промыть рис', image: '' },
+      { text: 'Варить в молоке 15 минут', image: '' },
+      { text: 'Добавить сахар', image: '' }
+    ],
     image: '/assets/rice-porridge.jpeg'
   },
   {
@@ -44,7 +52,11 @@ const RAW_RECIPES = [
       { name: 'Помидоры', amount: 0.3, measure: 'кг.' },
       { name: 'Лук', amount: 0.1, measure: 'кг.' }
     ],
-    steps: ['Нарезать овощи', 'Перемешать', 'Посолить по вкусу'],
+    steps: [
+      { text: 'Нарезать овощи', image: '' },
+      { text: 'Перемешать', image: '' },
+      { text: 'Посолить по вкусу', image: '' }
+    ],
     description: 'Хорошая альтернатива классическому греческому салату.',
     image: '/assets/vegetable-salad.jpeg'
   }
