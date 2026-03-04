@@ -328,6 +328,7 @@ const PRODUCTS_DB = [
 { name: 'Цельнозерновые мак.', category: '🍝 Макароны', measure: 'кг.', shelfLife: 365 },
 { name: 'Рисовая лапша', category: '🍝 Макароны', measure: 'г.', shelfLife: 730 },
 { name: 'Гречневая лапша', category: '🍝 Макароны', measure: 'г.', shelfLife: 365 },
+{ name: 'Листы для лазаньи', category: '🍝 Макаронные изделия', measure: 'шт.', shelfLife: 730 },
 
 // 👩‍🍳 Мука/Ингредиенты
 { name: 'Мука пшеничная', category: '👩‍🍳 Мука/Ингредиенты', measure: 'кг.', shelfLife: 365 },
@@ -354,16 +355,37 @@ const PRODUCTS_DB = [
 { name: 'Рапсовое масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
 
 // 🧂 Специи/Сахар
+[
 { name: 'Сахар-песок', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
 { name: 'Соль поваренная', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
-{ name: 'Черный перец', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
-{ name: 'Паприка', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Черный перец (молотый)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
+{ name: 'Паприка молотая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
 { name: 'Куркума', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Корица', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Корица молотая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
 { name: 'Морская соль', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
 { name: 'Тростниковый сахар', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1095 },
 { name: 'Итальянские травы', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
 { name: 'Чеснок сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Мускатный орех', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Орегано сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Базилик сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Тимьян сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Розмарин сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Хмели-сунели', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Уцхо-сунели', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Кориандр молотый', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Зира (кумин)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
+{ name: 'Красный перец (чили)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Имбирь молотый', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Гвоздика целая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
+{ name: 'Лавровый лист', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Ванилин', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 365 },
+{ name: 'Разрыхлитель теста', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 365 },
+{ name: 'Прованские травы', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Смесь 5 перцев', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
+{ name: 'Карри (смесь)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Сахарная пудра', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
+{ name: 'Лимонная кислота', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1825 },
 
 // 🍯 Соусы
 { name: 'Кетчуп', category: '🍯 Соусы', measure: 'шт.', shelfLife: 365 },
@@ -604,6 +626,27 @@ const PRODUCTS_DB = [
 { name: 'Чай для мам', category: '👶 Детское питание', measure: 'уп.', shelfLife: 730 },
 { name: 'Вода детская', category: '👶 Детское питание', measure: 'л.', shelfLife: 365 },
 { name: 'Пудинг детский', category: '👶 Детское питание', measure: 'шт.', shelfLife: 90 }
+
+// 🥫 Консервы
+{ name: 'Томаты в собственном соку', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Томатная паста', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
+{ name: 'Томаты в собственном соку', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Томатная паста', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
+{ name: 'Горошек зеленый консервированный', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Кукуруза сладкая консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Тунец консервированный (в соку)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
+{ name: 'Фасоль красная консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Фасоль белая консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Оливки без косточек', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
+{ name: 'Маслины без косточек', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
+{ name: 'Шампиньоны консервированные', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Кокосовое молоко (банка)', category: '🥫 Консервы', measure: 'л.', shelfLife: 545 },
+{ name: 'Ананасы консервированные (кольца)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Сгущенное молоко с сахаром', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
+{ name: 'Шпроты в масле', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Горбуша консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Огурцы маринованные (корнишоны)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
+{ name: 'Паштет печеночный', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 }
 ];
 
 // Unit conversion helpers (module-level so all components can use them)
@@ -2744,7 +2787,7 @@ const OlivierApp = () => {
                   className="flex-1 bg-blue-500 text-white p-3 rounded-xl font-semibold flex items-center justify-center gap-2"
                 >
                   <ShoppingCart size={20} />
-                  Добавить в покупки все недостающие ингредиенты
+                  Добавить недостающие продукты в корзину
                 </button>
               </div>
               
