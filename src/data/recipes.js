@@ -62,6 +62,71 @@ const RAW_RECIPES = [
   }
 ];
 
+// Лазанья: добавляем рецепт с шагами и путями к изображениям в подпапке public/assets/recipes/lasagna
+RAW_RECIPES.push({
+  id: 4,
+  name: 'Лазанья болоньезе (ВкусВилл)',
+  difficulty: 'средний',
+  time: 75,
+  ingredients: [
+    { name: 'Листы для лазаньи', amount: 10, measure: 'шт.' },
+    { name: 'Фарш из говядины и свинины', amount: 0.36, measure: 'кг.' },
+    { name: 'Томаты в собственном соку', amount: 0.75, measure: 'кг.' },
+    { name: 'Молоко 3.2%', amount: 0.8, measure: 'л.' },
+    { name: 'Сыр Пармезан (крошка)', amount: 0.1, measure: 'кг.' },
+    { name: 'Масло сливочное 82.5%', amount: 0.05, measure: 'кг.' },
+    { name: 'Мука пшеничная', amount: 0.06, measure: 'кг.' },
+    { name: 'Лук репчатый', amount: 1, measure: 'шт.' },
+    { name: 'Чеснок', amount: 0.015, measure: 'кг.' },
+    { name: 'Томатная паста', amount: 0.06, measure: 'кг.' },
+    { name: 'Масло оливковое', amount: 0.015, measure: 'л.' },
+    { name: 'Специи (базилик, орегано, мускатный орех)', amount: 0.005, measure: 'кг.' }
+  ],
+  steps: [
+    { 
+      text: 'Мелко нарезать лук и чеснок, обжарить на оливковом масле до прозрачности.', 
+      image: '/assets/recipes/lasagna/step1.jpeg' 
+    },
+    { 
+      text: 'Добавить фарш к овощам и обжаривать до золотистого цвета, разбивая комочки.', 
+      image: '/assets/recipes/lasagna/step2.jpeg' 
+    },
+    { 
+      text: 'Влить томаты в собственном соку и добавить томатную пасту. Посолить, добавить сахар и сухие травы. Тушить 30 минут, в конце добавить свежую зелень.', 
+      image: '/assets/recipes/lasagna/step3.jpeg' 
+    },
+    { 
+      text: 'Для соуса бешамель обжарить муку в кастрюле до орехового аромата, добавить сливочное масло и перемешать.', 
+      image: '/assets/recipes/lasagna/step4.jpeg' 
+    },
+    { 
+      text: 'Постепенно вливать теплое молоко в мучную смесь, постоянно помешивая венчиком.', 
+      image: '/assets/recipes/lasagna/step5.jpeg' 
+    },
+    { 
+      text: 'Добавить соль и мускатный орех, варить соус до загустения, затем снять с огня.', 
+      image: '/assets/recipes/lasagna/step6.jpeg' 
+    },
+    { 
+      text: 'Смазать дно формы соусом бешамель или маслом.', 
+      image: '/assets/recipes/lasagna/step7.jpeg' 
+    },
+    { 
+      text: 'Выложить слоями: листы лазаньи, мясной соус болоньезе, затем соус бешамель.', 
+      image: '/assets/recipes/lasagna/step8.jpeg' 
+    },
+    { 
+      text: 'Повторить слои несколько раз. Верхний слой залить остатками бешамеля и густо посыпать тертым пармезаном.', 
+      image: '/assets/recipes/lasagna/step9.jpeg' 
+    },
+    { 
+      text: 'Запекать в разогретой до 180°C духовке в течение 20–25 минут.', 
+      image: '/assets/recipes/lasagna/step10.jpeg' 
+    }
+  ],
+  image: '/assets/recipes/vkusvill_lasagna.jpeg'
+});
+
 function roundIfNeeded(n) {
   if (Number.isInteger(n)) return n;
   // Keep up to 2 decimal places, but trim trailing zeros
