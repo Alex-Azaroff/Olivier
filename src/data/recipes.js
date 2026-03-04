@@ -70,17 +70,21 @@ RAW_RECIPES.push({
   time: 75,
   ingredients: [
     { name: 'Листы для лазаньи', amount: 10, measure: 'шт.' },
-    { name: 'Фарш из говядины и свинины', amount: 0.36, measure: 'кг.' },
+    { name: 'Мясной фарш', amount: 0.36, measure: 'кг.' },
     { name: 'Томаты в собственном соку', amount: 0.75, measure: 'кг.' },
-    { name: 'Молоко 3.2%', amount: 0.8, measure: 'л.' },
-    { name: 'Сыр Пармезан (крошка)', amount: 0.1, measure: 'кг.' },
+    { name: 'Молоко пастеризованное', amount: 0.8, measure: 'л.' },
+    { name: 'Пармезан', amount: 0.1, measure: 'кг.' },
     { name: 'Масло сливочное 82.5%', amount: 0.05, measure: 'кг.' },
     { name: 'Мука пшеничная', amount: 0.06, measure: 'кг.' },
-    { name: 'Лук репчатый', amount: 1, measure: 'шт.' },
+    { name: 'Лук репчатый', amount: 1, measure: 'шт.' }, // Можно перевести в кг (0.1 кг), если в базе лук считается в кг
     { name: 'Чеснок', amount: 0.015, measure: 'кг.' },
     { name: 'Томатная паста', amount: 0.06, measure: 'кг.' },
-    { name: 'Масло оливковое', amount: 0.015, measure: 'л.' },
-    { name: 'Специи (базилик, орегано, мускатный орех)', amount: 0.005, measure: 'кг.' }
+    { name: 'Оливковое масло EV', amount: 0.015, measure: 'л.' },
+    { name: 'Мускатный орех', amount: 0.002, measure: 'г.' },
+    { name: 'Орегано сушеный', amount: 0.002, measure: 'г.' },
+    { name: 'Базилик сушеный', amount: 0.002, measure: 'г.' },
+    { name: 'Соль поваренная', amount: 0.005, measure: 'кг.' },
+    { name: 'Сахар-песок', amount: 0.01, measure: 'кг.' }
   ],
   steps: [
     { 
@@ -124,7 +128,7 @@ RAW_RECIPES.push({
       image: '/assets/recipes/lasagna/step10.jpeg' 
     }
   ],
-  image: '/assets/recipes/vkusvill_lasagna.jpeg'
+  image: '/assets/recipes/lasagna/vkusvill_lasagna.jpeg'
 });
 
 function roundIfNeeded(n) {
