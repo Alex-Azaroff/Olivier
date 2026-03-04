@@ -355,7 +355,6 @@ const PRODUCTS_DB = [
 { name: 'Рапсовое масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
 
 // 🧂 Специи/Сахар
-[
 { name: 'Сахар-песок', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
 { name: 'Соль поваренная', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
 { name: 'Черный перец (молотый)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
@@ -625,8 +624,7 @@ const PRODUCTS_DB = [
 { name: 'Овощное пюре', category: '👶 Детское питание', measure: 'шт.', shelfLife: 365 },
 { name: 'Чай для мам', category: '👶 Детское питание', measure: 'уп.', shelfLife: 730 },
 { name: 'Вода детская', category: '👶 Детское питание', measure: 'л.', shelfLife: 365 },
-{ name: 'Пудинг детский', category: '👶 Детское питание', measure: 'шт.', shelfLife: 90 }
-
+{ name: 'Пудинг детский', category: '👶 Детское питание', measure: 'шт.', shelfLife: 90 },
 // 🥫 Консервы
 { name: 'Томаты в собственном соку', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
 { name: 'Томатная паста', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
