@@ -1,670 +1,41 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText } from 'lucide-react';
+import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2 } from 'lucide-react';
 import { supabase } from './src/supabaseClient';
 import { RECIPES_DB } from './src/data/recipes';
+import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
 
-// Sample product database (1000 products simulated with 50 for demo)
-const PRODUCTS_DB = [
-// 🥦 Овощи
-{ name: 'Картофель', category: '🥦 Овощи', measure: 'кг.', shelfLife: 150 },
-{ name: 'Морковь', category: '🥦 Овощи', measure: 'кг.', shelfLife: 30 },
-{ name: 'Лук репчатый', category: '🥦 Овощи', measure: 'кг.', shelfLife: 90 },
-{ name: 'Капуста белокочанная', category: '🥦 Овощи', measure: 'кг.', shelfLife: 40 },
-{ name: 'Огурцы', category: '🥦 Овощи', measure: 'кг.', shelfLife: 7 },
-{ name: 'Томаты', category: '🥦 Овощи', measure: 'кг.', shelfLife: 7 },
-{ name: 'Перец болгарский', category: '🥦 Овощи', measure: 'кг.', shelfLife: 10 },
-{ name: 'Кабачки', category: '🥦 Овощи', measure: 'кг.', shelfLife: 14 },
-{ name: 'Чеснок', category: '🥦 Овощи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Баклажаны', category: '🥦 Овощи', measure: 'кг.', shelfLife: 10 },
-
-// 🍎 Фрукты
-{ name: 'Яблоки', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 30 },
-{ name: 'Бананы', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 5 },
-{ name: 'Груши', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 14 },
-{ name: 'Апельсины', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 21 },
-{ name: 'Лимоны', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 30 },
-{ name: 'Грейпфруты', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 21 },
-{ name: 'Виноград', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 7 },
-{ name: 'Киви', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 15 },
-{ name: 'Сливы', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 7 },
-{ name: 'Персики', category: '🍎 Фрукты', measure: 'кг.', shelfLife: 5 },
-
-// 🍍 Экзотика
-{ name: 'Манго', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 7 },
-{ name: 'Авокадо', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 5 },
-{ name: 'Ананас', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 7 },
-{ name: 'Папайя', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 5 },
-{ name: 'Маракуйя', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 10 },
-{ name: 'Кокос', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 30 },
-{ name: 'Помело', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 20 },
-{ name: 'Фейхоа', category: '🍍 Экзотика', measure: 'кг.', shelfLife: 7 },
-{ name: 'Питахайя', category: '🍍 Экзотика', measure: 'шт.', shelfLife: 5 },
-{ name: 'Личи', category: '🍍 Экзотика', measure: 'кг.', shelfLife: 7 },
-
-// 🍓 Ягоды
-{ name: 'Клубника', category: '🍓 Ягоды', measure: 'г.', shelfLife: 3 },
-{ name: 'Голубика', category: '🍓 Ягоды', measure: 'г.', shelfLife: 7 },
-{ name: 'Малина', category: '🍓 Ягоды', measure: 'г.', shelfLife: 2 },
-{ name: 'Ежевика', category: '🍓 Ягоды', measure: 'г.', shelfLife: 3 },
-{ name: 'Вишня', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 5 },
-{ name: 'Черешня', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 5 },
-{ name: 'Клюква', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 30 },
-{ name: 'Брусника', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 30 },
-{ name: 'Смородина', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 7 },
-{ name: 'Крыжовник', category: '🍓 Ягоды', measure: 'кг.', shelfLife: 7 },
-
-// 🌿 Зелень
-{ name: 'Укроп', category: '🌿 Зелень', measure: 'г.', shelfLife: 5 },
-{ name: 'Петрушка', category: '🌿 Зелень', measure: 'г.', shelfLife: 5 },
-{ name: 'Кинза', category: '🌿 Зелень', measure: 'г.', shelfLife: 4 },
-{ name: 'Салат Айсберг', category: '🌿 Зелень', measure: 'шт.', shelfLife: 7 },
-{ name: 'Руккола', category: '🌿 Зелень', measure: 'г.', shelfLife: 4 },
-{ name: 'Шпинат', category: '🌿 Зелень', measure: 'г.', shelfLife: 4 },
-{ name: 'Зеленый лук', category: '🌿 Зелень', measure: 'г.', shelfLife: 5 },
-{ name: 'Базилик', category: '🌿 Зелень', measure: 'г.', shelfLife: 3 },
-{ name: 'Мята', category: '🌿 Зелень', measure: 'г.', shelfLife: 5 },
-{ name: 'Сельдерей (стебли)', category: '🌿 Зелень', measure: 'уп.', shelfLife: 14 },
-
-// 🍄 Грибы
-{ name: 'Шампиньоны', category: '🍄 Грибы', measure: 'кг.', shelfLife: 7 },
-{ name: 'Вешенки', category: '🍄 Грибы', measure: 'кг.', shelfLife: 5 },
-{ name: 'Шиитаке', category: '🍄 Грибы', measure: 'г.', shelfLife: 7 },
-{ name: 'Эринги', category: '🍄 Грибы', measure: 'кг.', shelfLife: 10 },
-{ name: 'Портобелло', category: '🍄 Грибы', measure: 'шт.', shelfLife: 5 },
-{ name: 'Опята', category: '🍄 Грибы', measure: 'кг.', shelfLife: 5 },
-{ name: 'Лисички', category: '🍄 Грибы', measure: 'кг.', shelfLife: 7 },
-{ name: 'Белые грибы', category: '🍄 Грибы', measure: 'кг.', shelfLife: 5 },
-{ name: 'Грибное ассорти', category: '🍄 Грибы', measure: 'уп.', shelfLife: 5 },
-{ name: 'Трюфели (свежие)', category: '🍄 Грибы', measure: 'г.', shelfLife: 7 },
-
-// 🥛 Молочные
-{ name: 'Молоко пастеризованное', category: '🥛 Молочные', measure: 'л.', shelfLife: 7 },
-{ name: 'Молоко ультрапаст.', category: '🥛 Молочные', measure: 'л.', shelfLife: 180 },
-{ name: 'Сливки 10%', category: '🥛 Молочные', measure: 'л.', shelfLife: 7 },
-{ name: 'Сливки 33%', category: '🥛 Молочные', measure: 'л.', shelfLife: 10 },
-{ name: 'Топленое молоко', category: '🥛 Молочные', measure: 'л.', shelfLife: 10 },
-{ name: 'Сгущенное молоко', category: '🥛 Молочные', measure: 'банка', shelfLife: 365 },
-{ name: 'Сухое молоко', category: '🥛 Молочные', measure: 'г.', shelfLife: 365 },
-{ name: 'Молоко безлактозное', category: '🥛 Молочные', measure: 'л.', shelfLife: 30 },
-{ name: 'Сливки порционные', category: '🥛 Молочные', measure: 'уп.', shelfLife: 120 },
-{ name: 'Козье молоко', category: '🥛 Молочные', measure: 'л.', shelfLife: 5 },
-
-// 🥛 Кисломолочные
-{ name: 'Кефир', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 10 },
-{ name: 'Ряженка', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 10 },
-{ name: 'Питьевой йогурт', category: '🥛 Кисломолочные', measure: 'шт.', shelfLife: 21 },
-{ name: 'Ацидофилин', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 7 },
-{ name: 'Айран', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 14 },
-{ name: 'Тан', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 14 },
-{ name: 'Простокваша', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 7 },
-{ name: 'Кумыс', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 5 },
-{ name: 'Биолакт', category: '🥛 Кисломолочные', measure: 'шт.', shelfLife: 10 },
-{ name: 'Варенец', category: '🥛 Кисломолочные', measure: 'л.', shelfLife: 10 },
-
-// 🧀 Творог и сырки
-{ name: 'Творог рассыпчатый', category: '🧀 Творог', measure: 'г.', shelfLife: 5 },
-{ name: 'Творог в пачках', category: '🧀 Творог', measure: 'шт.', shelfLife: 7 },
-{ name: 'Мягкий творог', category: '🧀 Творог', measure: 'шт.', shelfLife: 14 },
-{ name: 'Глазированные сырки', category: '🧀 Творог', measure: 'шт.', shelfLife: 15 },
-{ name: 'Творожная масса', category: '🧀 Творог', measure: 'г.', shelfLife: 5 },
-{ name: 'Зерненый творог', category: '🧀 Творог', measure: 'г.', shelfLife: 14 },
-{ name: 'Творожный сыр', category: '🧀 Творог', measure: 'г.', shelfLife: 30 },
-{ name: 'Детские творожки', category: '🧀 Творог', measure: 'шт.', shelfLife: 14 },
-{ name: 'Запеканка (готовая)', category: '🧀 Творог', measure: 'кг.', shelfLife: 3 },
-{ name: 'Сырники (п/ф)', category: '🧀 Творог', measure: 'уп.', shelfLife: 30 },
-
-// 🥛 Сметана
-{ name: 'Сметана 10%', category: '🥛 Сметана', measure: 'г.', shelfLife: 15 },
-{ name: 'Сметана 15%', category: '🥛 Сметана', measure: 'г.', shelfLife: 15 },
-{ name: 'Сметана 20%', category: '🥛 Сметана', measure: 'г.', shelfLife: 15 },
-{ name: 'Сметана 30%', category: '🥛 Сметана', measure: 'г.', shelfLife: 14 },
-{ name: 'Крем-фреш', category: '🥛 Сметана', measure: 'г.', shelfLife: 10 },
-{ name: 'Термостатная сметана', category: '🥛 Сметана', measure: 'г.', shelfLife: 20 },
-{ name: 'Сметанный продукт', category: '🥛 Сметана', measure: 'г.', shelfLife: 30 },
-{ name: 'Сметана из козьего молока', category: '🥛 Сметана', measure: 'г.', shelfLife: 7 },
-{ name: 'Сметана с зеленью', category: '🥛 Сметана', measure: 'г.', shelfLife: 10 },
-{ name: 'Сметана деревенская', category: '🥛 Сметана', measure: 'г.', shelfLife: 5 },
-
-// 🧈 Масло и маргарин
-{ name: 'Масло сливочное 82.5%', category: '🧈 Масло', measure: 'шт.', shelfLife: 35 },
-{ name: 'Масло сливочное 72.5%', category: '🧈 Масло', measure: 'шт.', shelfLife: 35 },
-{ name: 'Масло гхи', category: '🧈 Масло', measure: 'г.', shelfLife: 365 },
-{ name: 'Маргарин для выпечки', category: '🧈 Масло', measure: 'шт.', shelfLife: 90 },
-{ name: 'Спред', category: '🧈 Масло', measure: 'шт.', shelfLife: 60 },
-{ name: 'Масло соленое', category: '🧈 Масло', measure: 'шт.', shelfLife: 45 },
-{ name: 'Масло шоколадное', category: '🧈 Масло', measure: 'шт.', shelfLife: 20 },
-{ name: 'Масло чесночное', category: '🧈 Масло', measure: 'г.', shelfLife: 15 },
-{ name: 'Сливочно-раст. смесь', category: '🧈 Масло', measure: 'шт.', shelfLife: 60 },
-{ name: 'Мягкое масло', category: '🧈 Масло', measure: 'г.', shelfLife: 45 },
-
-// 🧀 Твердые сыры
-{ name: 'Пармезан', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 120 },
-{ name: 'Гауда', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 60 },
-{ name: 'Эдам', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 60 },
-{ name: 'Маасдам', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 45 },
-{ name: 'Чеддер', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 90 },
-{ name: 'Российский сыр', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 45 },
-{ name: 'Тильзитер', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 45 },
-{ name: 'Швейцарский сыр', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 90 },
-{ name: 'Сыр в нарезке', category: '🧀 Сыры твердые', measure: 'уп.', shelfLife: 30 },
-{ name: 'Козий твердый сыр', category: '🧀 Сыры твердые', measure: 'кг.', shelfLife: 60 },
-
-// 🧀 Мягкие сыры
-{ name: 'Моцарелла', category: '🧀 Сыры мягкие', measure: 'уп.', shelfLife: 15 },
-{ name: 'Фета', category: '🧀 Сыры мягкие', measure: 'г.', shelfLife: 30 },
-{ name: 'Брынза', category: '🧀 Сыры мягкие', measure: 'кг.', shelfLife: 15 },
-{ name: 'Сулугуни', category: '🧀 Сыры мягкие', measure: 'кг.', shelfLife: 15 },
-{ name: 'Камамбер', category: '🧀 Сыры мягкие', measure: 'шт.', shelfLife: 30 },
-{ name: 'Бри', category: '🧀 Сыры мягкие', measure: 'шт.', shelfLife: 30 },
-{ name: 'Адыгейский сыр', category: '🧀 Сыры мягкие', measure: 'кг.', shelfLife: 5 },
-{ name: 'Дорблю', category: '🧀 Сыры мягкие', measure: 'г.', shelfLife: 30 },
-{ name: 'Рикотта', category: '🧀 Сыры мягкие', measure: 'г.', shelfLife: 10 },
-{ name: 'Маскарпоне', category: '🧀 Сыры мягкие', measure: 'г.', shelfLife: 15 },
-
-// 🥚 Яйца
-{ name: 'Яйца С0', category: '🥚 Яйца', measure: 'дес.', shelfLife: 25 },
-{ name: 'Яйца С1', category: '🥚 Яйца', measure: 'дес.', shelfLife: 25 },
-{ name: 'Перепелиные яйца', category: '🥚 Яйца', measure: 'уп.', shelfLife: 40 },
-{ name: 'Яйца диетические', category: '🥚 Яйца', measure: 'дес.', shelfLife: 7 },
-{ name: 'Яйца с селеном', category: '🥚 Яйца', measure: 'дес.', shelfLife: 25 },
-{ name: 'Деревенские яйца', category: '🥚 Яйца', measure: 'дес.', shelfLife: 25 },
-{ name: 'Меланж яичный', category: '🥚 Яйца', measure: 'л.', shelfLife: 3 },
-{ name: 'Белок в бутылке', category: '🥚 Яйца', measure: 'шт.', shelfLife: 5 },
-{ name: 'Желток в бутылке', category: '🥚 Яйца', measure: 'шт.', shelfLife: 5 },
-{ name: 'Вареные яйца', category: '🥚 Яйца', measure: 'уп.', shelfLife: 10 },
-
-// 🥩 Мясо
-{ name: 'Говядина (вырезка)', category: '🥩 Мясо', measure: 'кг.', shelfLife: 4 },
-{ name: 'Свинина (шея)', category: '🥩 Мясо', measure: 'кг.', shelfLife: 4 },
-{ name: 'Баранина', category: '🥩 Мясо', measure: 'кг.', shelfLife: 3 },
-{ name: 'Телятина', category: '🥩 Мясо', measure: 'кг.', shelfLife: 3 },
-{ name: 'Мясной фарш', category: '🥩 Мясо', measure: 'кг.', shelfLife: 2 },
-{ name: 'Ребра свиные', category: '🥩 Мясо', measure: 'кг.', shelfLife: 4 },
-{ name: 'Антрекот говяжий', category: '🥩 Мясо', measure: 'кг.', shelfLife: 4 },
-{ name: 'Субпродукты (печень)', category: '🥩 Мясо', measure: 'кг.', shelfLife: 2 },
-{ name: 'Мясо для гуляша', category: '🥩 Мясо', measure: 'кг.', shelfLife: 3 },
-{ name: 'Стейк в вакууме', category: '🥩 Мясо', measure: 'шт.', shelfLife: 21 },
-
-// 🍗 Птица
-{ name: 'Куриное филе', category: '🍗 Птица', measure: 'кг.', shelfLife: 4 },
-{ name: 'Бедра куриные', category: '🍗 Птица', measure: 'кг.', shelfLife: 4 },
-{ name: 'Крылья куриные', category: '🍗 Птица', measure: 'кг.', shelfLife: 4 },
-{ name: 'Тушка цыпленка', category: '🍗 Птица', measure: 'кг.', shelfLife: 5 },
-{ name: 'Филе индейки', category: '🍗 Птица', measure: 'кг.', shelfLife: 4 },
-{ name: 'Голень индейки', category: '🍗 Птица', measure: 'кг.', shelfLife: 4 },
-{ name: 'Утиная грудка', category: '🍗 Птица', measure: 'кг.', shelfLife: 3 },
-{ name: 'Перепел (тушка)', category: '🍗 Птица', measure: 'шт.', shelfLife: 3 },
-{ name: 'Фарш из индейки', category: '🍗 Птица', measure: 'кг.', shelfLife: 2 },
-{ name: 'Куриная печень', category: '🍗 Птица', measure: 'кг.', shelfLife: 2 },
-
-// 🥟 Полуфабрикаты
-{ name: 'Котлеты зам.', category: '🥟 Полуфабрикаты', measure: 'уп.', shelfLife: 90 },
-{ name: 'Пельмени', category: '🥟 Полуфабрикаты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Хинкали', category: '🥟 Полуфабрикаты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Блинчики с мясом', category: '🥟 Полуфабрикаты', measure: 'уп.', shelfLife: 90 },
-{ name: 'Наггетсы', category: '🥟 Полуфабрикаты', measure: 'уп.', shelfLife: 120 },
-{ name: 'Вареники', category: '🥟 Полуфабрикаты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Чебуреки', category: '🥟 Полуфабрикаты', measure: 'шт.', shelfLife: 90 },
-{ name: 'Фрикадельки', category: '🥟 Полуфабрикаты', measure: 'уп.', shelfLife: 90 },
-{ name: 'Мясные ежики', category: '🥟 Полуфабрикаты', measure: 'уп.', shelfLife: 90 },
-{ name: 'Голубцы', category: '🥟 Полуфабрикаты', measure: 'кг.', shelfLife: 90 },
-
-// 🌭 Колбасы
-{ name: 'Сосиски молочные', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 20 },
-{ name: 'Сардельки', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 15 },
-{ name: 'Докторская колбаса', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 20 },
-{ name: 'Салями', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 60 },
-{ name: 'Сервелат', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 45 },
-{ name: 'Ветчина', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 25 },
-{ name: 'Краковская колбаса', category: '🌭 Колбасы', measure: 'шт.', shelfLife: 30 },
-{ name: 'Колбаски для гриля', category: '🌭 Колбасы', measure: 'уп.', shelfLife: 10 },
-{ name: 'Шпикачки', category: '🌭 Колбасы', measure: 'кг.', shelfLife: 15 },
-{ name: 'Паштет мясной', category: '🌭 Колбасы', measure: 'шт.', shelfLife: 30 },
-
-// 🥓 Деликатесы
-{ name: 'Бекон с/к', category: '🥓 Деликатесы', measure: 'уп.', shelfLife: 60 },
-{ name: 'Буженина', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 15 },
-{ name: 'Карбонад', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 20 },
-{ name: 'Хамон', category: '🥓 Деликатесы', measure: 'г.', shelfLife: 120 },
-{ name: 'Прошутто', category: '🥓 Деликатесы', measure: 'г.', shelfLife: 90 },
-{ name: 'Балык мясной', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 30 },
-{ name: 'Грудинка копченая', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 30 },
-{ name: 'Солонина', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 45 },
-{ name: 'Зельц', category: '🥓 Деликатесы', measure: 'кг.', shelfLife: 7 },
-{ name: 'Бастурма', category: '🥓 Деликатесы', measure: 'г.', shelfLife: 180 },
-
-// 🐟 Рыба свежая
-{ name: 'Семга (филе)', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 3 },
-{ name: 'Дорадо', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 3 },
-{ name: 'Сибас', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 3 },
-{ name: 'Форель речная', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 3 },
-{ name: 'Треска', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 2 },
-{ name: 'Окунь речной', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 2 },
-{ name: 'Карп', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 2 },
-{ name: 'Щука', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 2 },
-{ name: 'Стейк лосося', category: '🐟 Рыба свежая', measure: 'шт.', shelfLife: 3 },
-{ name: 'Филе минтая охл.', category: '🐟 Рыба свежая', measure: 'кг.', shelfLife: 2 },
-
-// 🧊 Рыба заморозка
-{ name: 'Горбуша зам.', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 210 },
-{ name: 'Скумбрия зам.', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-{ name: 'Хек', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 240 },
-{ name: 'Пангасиус', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-{ name: 'Тилапия', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-{ name: 'Сельдь зам.', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-{ name: 'Камбала', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-{ name: 'Рыбные палочки', category: '🧊 Рыба заморозка', measure: 'уп.', shelfLife: 120 },
-{ name: 'Стейки зубатки', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 150 },
-{ name: 'Мойва', category: '🧊 Рыба заморозка', measure: 'кг.', shelfLife: 180 },
-
-// 🦐 Морепродукты
-{ name: 'Креветки зам.', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 270 },
-{ name: 'Кальмары', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Мидии в раковинах', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Морской коктейль', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Осьминоги', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Гребешки', category: '🦐 Морепродукты', measure: 'г.', shelfLife: 180 },
-{ name: 'Крабы зам.', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Лангустины', category: '🦐 Морепродукты', measure: 'кг.', shelfLife: 270 },
-{ name: 'Крабовые палочки', category: '🦐 Морепродукты', measure: 'уп.', shelfLife: 90 },
-{ name: 'Морская капуста', category: '🦐 Морепродукты', measure: 'г.', shelfLife: 30 },
-
-// 🍣 Рыба соленая
-{ name: 'Слабосоленая семга', category: '🍣 Рыба соленая', measure: 'г.', shelfLife: 45 },
-{ name: 'Сельдь в масле', category: '🍣 Рыба соленая', measure: 'шт.', shelfLife: 60 },
-{ name: 'Скумбрия х/к', category: '🍣 Рыба соленая', measure: 'кг.', shelfLife: 30 },
-{ name: 'Скумбрия г/к', category: '🍣 Рыба соленая', measure: 'кг.', shelfLife: 5 },
-{ name: 'Форель х/к', category: '🍣 Рыба соленая', measure: 'г.', shelfLife: 45 },
-{ name: 'Килька пряная', category: '🍣 Рыба соленая', measure: 'г.', shelfLife: 30 },
-{ name: 'Балык рыбы', category: '🍣 Рыба соленая', measure: 'г.', shelfLife: 30 },
-{ name: 'Шпроты (пресервы)', category: '🍣 Рыба соленая', measure: 'шт.', shelfLife: 60 },
-{ name: 'Анчоусы', category: '🍣 Рыба соленая', measure: 'банка', shelfLife: 90 },
-{ name: 'Вяленая вобла', category: '🍣 Рыба соленая', measure: 'кг.', shelfLife: 180 },
-
-// 🥫 Консервы рыбные
-{ name: 'Тунец в с/с', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 1095 },
-{ name: 'Сайра в масле', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Горбуша натур.', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Печень трески', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Шпроты в масле', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Сардины', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Бычки в томате', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Килька в томате', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 540 },
-{ name: 'Морская капуста конс.', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-{ name: 'Крабовое мясо конс.', category: '🥫 Консервы рыбные', measure: 'банка', shelfLife: 730 },
-
-// 🖤 Икра
-{ name: 'Икра красная', category: '🖤 Икра', measure: 'г.', shelfLife: 180 },
-{ name: 'Икра черная', category: '🖤 Икра', measure: 'г.', shelfLife: 180 },
-{ name: 'Икра минтая', category: '🖤 Икра', measure: 'г.', shelfLife: 180 },
-{ name: 'Икра мойвы в соусе', category: '🖤 Икра', measure: 'шт.', shelfLife: 120 },
-{ name: 'Икра щучья', category: '🖤 Икра', measure: 'г.', shelfLife: 120 },
-{ name: 'Икра сазана', category: '🖤 Икра', measure: 'г.', shelfLife: 120 },
-{ name: 'Икра сельди', category: '🖤 Икра', measure: 'г.', shelfLife: 120 },
-{ name: 'Имитированная икра', category: '🖤 Икра', measure: 'г.', shelfLife: 180 },
-{ name: 'Икра трески', category: '🖤 Икра', measure: 'г.', shelfLife: 180 },
-{ name: 'Тарамасалата', category: '🖤 Икра', measure: 'г.', shelfLife: 30 },
-
-// 🌾 Крупы
-{ name: 'Рис длиннозерный', category: '🌾 Крупы', measure: 'кг.', shelfLife: 540 },
-{ name: 'Гречневая крупа', category: '🌾 Крупы', measure: 'кг.', shelfLife: 600 },
-{ name: 'Овсяные хлопья', category: '🌾 Крупы', measure: 'кг.', shelfLife: 365 },
-{ name: 'Пшено', category: '🌾 Крупы', measure: 'кг.', shelfLife: 270 },
-{ name: 'Булгур', category: '🌾 Крупы', measure: 'кг.', shelfLife: 540 },
-{ name: 'Киноа', category: '🌾 Крупы', measure: 'кг.', shelfLife: 365 },
-{ name: 'Кускус', category: '🌾 Крупы', measure: 'кг.', shelfLife: 540 },
-{ name: 'Манная крупа', category: '🌾 Крупы', measure: 'кг.', shelfLife: 300 },
-{ name: 'Перловая крупа', category: '🌾 Крупы', measure: 'кг.', shelfLife: 540 },
-{ name: 'Ячневая крупа', category: '🌾 Крупы', measure: 'кг.', shelfLife: 450 },
-
-// 🍝 Макароны
-{ name: 'Спагетти', category: '🍝 Макароны', measure: 'кг.', shelfLife: 730 },
-{ name: 'Рожки', category: '🍝 Макароны', measure: 'кг.', shelfLife: 730 },
-{ name: 'Перья (пенне)', category: '🍝 Макароны', measure: 'кг.', shelfLife: 730 },
-{ name: 'Спиральки', category: '🍝 Макароны', measure: 'кг.', shelfLife: 730 },
-{ name: 'Вермишель', category: '🍝 Макароны', measure: 'кг.', shelfLife: 730 },
-{ name: 'Гнезда', category: '🍝 Макароны', measure: 'уп.', shelfLife: 730 },
-{ name: 'Листы для лазаньи', category: '🍝 Макароны', measure: 'уп.', shelfLife: 730 },
-{ name: 'Цельнозерновые мак.', category: '🍝 Макароны', measure: 'кг.', shelfLife: 365 },
-{ name: 'Рисовая лапша', category: '🍝 Макароны', measure: 'г.', shelfLife: 730 },
-{ name: 'Гречневая лапша', category: '🍝 Макароны', measure: 'г.', shelfLife: 365 },
-{ name: 'Листы для лазаньи', category: '🍝 Макаронные изделия', measure: 'шт.', shelfLife: 730 },
-
-// 👩‍🍳 Мука/Ингредиенты
-{ name: 'Мука пшеничная', category: '👩‍🍳 Мука/Ингредиенты', measure: 'кг.', shelfLife: 365 },
-{ name: 'Мука ржаная', category: '👩‍🍳 Мука/Ингредиенты', measure: 'кг.', shelfLife: 180 },
-{ name: 'Дрожжи сухие', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 365 },
-{ name: 'Разрыхлитель теста', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 730 },
-{ name: 'Крахмал кукурузный', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 730 },
-{ name: 'Сахарная пудра', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 730 },
-{ name: 'Ванилин', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 1095 },
-{ name: 'Желатин', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 730 },
-{ name: 'Панировочные сухари', category: '👩‍🍳 Мука/Ингредиенты', measure: 'г.', shelfLife: 180 },
-{ name: 'Смесь для блинов', category: '👩‍🍳 Мука/Ингредиенты', measure: 'кг.', shelfLife: 365 },
-
-// 🌻 Масла
-{ name: 'Подсолнечное масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
-{ name: 'Оливковое масло EV', category: '🌻 Масла', measure: 'л.', shelfLife: 540 },
-{ name: 'Масло для жарки', category: '🌻 Масла', measure: 'л.', shelfLife: 730 },
-{ name: 'Льняное масло', category: '🌻 Масла', measure: 'л.', shelfLife: 180 },
-{ name: 'Кунжутное масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
-{ name: 'Кокосовое масло', category: '🌻 Масла', measure: 'г.', shelfLife: 730 },
-{ name: 'Виноградная косточка', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
-{ name: 'Кукурузное масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
-{ name: 'Масло авокадо', category: '🌻 Масла', measure: 'л.', shelfLife: 270 },
-{ name: 'Рапсовое масло', category: '🌻 Масла', measure: 'л.', shelfLife: 365 },
-
-// 🧂 Специи/Сахар
-{ name: 'Сахар-песок', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
-{ name: 'Соль поваренная', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
-{ name: 'Черный перец (молотый)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
-{ name: 'Паприка молотая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Куркума', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Корица молотая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Морская соль', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1825 },
-{ name: 'Тростниковый сахар', category: '🧂 Специи/Сахар', measure: 'кг.', shelfLife: 1095 },
-{ name: 'Итальянские травы', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Чеснок сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Мускатный орех', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Орегано сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Базилик сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Тимьян сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Розмарин сушеный', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Хмели-сунели', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Уцхо-сунели', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Кориандр молотый', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Зира (кумин)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
-{ name: 'Красный перец (чили)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Имбирь молотый', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Гвоздика целая', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
-{ name: 'Лавровый лист', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Ванилин', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 365 },
-{ name: 'Разрыхлитель теста', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 365 },
-{ name: 'Прованские травы', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Смесь 5 перцев', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1095 },
-{ name: 'Карри (смесь)', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Сахарная пудра', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 730 },
-{ name: 'Лимонная кислота', category: '🧂 Специи/Сахар', measure: 'г.', shelfLife: 1825 },
-
-// 🍯 Соусы
-{ name: 'Кетчуп', category: '🍯 Соусы', measure: 'шт.', shelfLife: 365 },
-{ name: 'Майонез', category: '🍯 Соусы', measure: 'г.', shelfLife: 90 },
-{ name: 'Горчица', category: '🍯 Соусы', measure: 'г.', shelfLife: 180 },
-{ name: 'Соевый соус', category: '🍯 Соусы', measure: 'л.', shelfLife: 730 },
-{ name: 'Томатный соус', category: '🍯 Соусы', measure: 'г.', shelfLife: 365 },
-{ name: 'Соус Терияки', category: '🍯 Соусы', measure: 'г.', shelfLife: 365 },
-{ name: 'Соус Песто', category: '🍯 Соусы', measure: 'г.', shelfLife: 270 },
-{ name: 'Соус Сырный', category: '🍯 Соусы', measure: 'г.', shelfLife: 180 },
-{ name: 'Хрен', category: '🍯 Соусы', measure: 'г.', shelfLife: 90 },
-{ name: 'Аджика', category: '🍯 Соусы', measure: 'г.', shelfLife: 365 },
-
-// 🥒 Маринады
-{ name: 'Уксус 9%', category: '🥒 Маринады', measure: 'л.', shelfLife: 1095 },
-{ name: 'Уксус яблочный', category: '🥒 Маринады', measure: 'л.', shelfLife: 730 },
-{ name: 'Бальзамик', category: '🥒 Маринады', measure: 'л.', shelfLife: 1095 },
-{ name: 'Маринов. огурцы', category: '🥒 Маринады', measure: 'банка', shelfLife: 730 },
-{ name: 'Маринов. томаты', category: '🥒 Маринады', measure: 'банка', shelfLife: 730 },
-{ name: 'Квашеная капуста', category: '🥒 Маринады', measure: 'кг.', shelfLife: 30 },
-{ name: 'Оливки', category: '🥒 Маринады', measure: 'банка', shelfLife: 1095 },
-{ name: 'Каперсы', category: '🥒 Маринады', measure: 'г.', shelfLife: 730 },
-{ name: 'Корнишоны', category: '🥒 Маринады', measure: 'банка', shelfLife: 730 },
-{ name: 'Имбирь маринов.', category: '🥒 Маринады', measure: 'г.', shelfLife: 180 },
-
-// 🫘 Бобовые
-{ name: 'Чечевица красная', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 540 },
-{ name: 'Чечевица зеленая', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 540 },
-{ name: 'Нут', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 540 },
-{ name: 'Фасоль белая', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 730 },
-{ name: 'Фасоль красная', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 730 },
-{ name: 'Горох колотый', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 540 },
-{ name: 'Маш', category: '🫘 Бобовые', measure: 'кг.', shelfLife: 540 },
-{ name: 'Фасоль конс.', category: '🫘 Бобовые', measure: 'банка', shelfLife: 1095 },
-{ name: 'Горошек конс.', category: '🫘 Бобовые', measure: 'банка', shelfLife: 730 },
-{ name: 'Кукуруза конс.', category: '🫘 Бобовые', measure: 'банка', shelfLife: 730 },
-
-// 🥣 Завтраки
-{ name: 'Хлопья кукурузные', category: '🥣 Завтраки', measure: 'г.', shelfLife: 270 },
-{ name: 'Мюсли с орехами', category: '🥣 Завтраки', measure: 'кг.', shelfLife: 270 },
-{ name: 'Гранола', category: '🥣 Завтраки', measure: 'г.', shelfLife: 180 },
-{ name: 'Шоколадные шарики', category: '🥣 Завтраки', measure: 'г.', shelfLife: 365 },
-{ name: 'Подушечки', category: '🥣 Завтраки', measure: 'г.', shelfLife: 270 },
-{ name: 'Каша быстр. приг.', category: '🥣 Завтраки', measure: 'уп.', shelfLife: 365 },
-{ name: 'Отруби', category: '🥣 Завтраки', measure: 'г.', shelfLife: 180 },
-{ name: 'Гречневые хлопья', category: '🥣 Завтраки', measure: 'г.', shelfLife: 365 },
-{ name: 'Смесь злаков', category: '🥣 Завтраки', measure: 'кг.', shelfLife: 365 },
-{ name: 'Батончики мюсли', category: '🥣 Завтраки', measure: 'шт.', shelfLife: 365 },
-
-// 🍞 Хлеб
-{ name: 'Хлеб пшеничный', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 3 },
-{ name: 'Хлеб ржаной', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 5 },
-{ name: 'Батон нарезной', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 3 },
-{ name: 'Хлеб для тостов', category: '🍞 Хлеб', measure: 'уп.', shelfLife: 10 },
-{ name: 'Бородинский хлеб', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 5 },
-{ name: 'Багет', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 1 },
-{ name: 'Чиабатта', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 2 },
-{ name: 'Хлеб цельнозерновой', category: '🍞 Хлеб', measure: 'шт.', shelfLife: 5 },
-{ name: 'Хлебцы сухие', category: '🍞 Хлеб', measure: 'уп.', shelfLife: 180 },
-{ name: 'Лаваш', category: '🍞 Хлеб', measure: 'уп.', shelfLife: 3 },
-
-// 🥐 Выпечка
-{ name: 'Булки для бургеров', category: '🥐 Выпечка', measure: 'уп.', shelfLife: 7 },
-{ name: 'Пирожки с мясом', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 2 },
-{ name: 'Пирожки с капустой', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 2 },
-{ name: 'Сосиска в тесте', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 2 },
-{ name: 'Слойки язычки', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 3 },
-{ name: 'Круассаны пустые', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 3 },
-{ name: 'Хачапури', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 2 },
-{ name: 'Пита', category: '🥐 Выпечка', measure: 'уп.', shelfLife: 5 },
-{ name: 'Тортилья', category: '🥐 Выпечка', measure: 'уп.', shelfLife: 60 },
-{ name: 'Слойка с сыром', category: '🥐 Выпечка', measure: 'шт.', shelfLife: 2 },
-
-// 🍪 Печенье
-{ name: 'Печенье овсяное', category: '🍪 Печенье', measure: 'кг.', shelfLife: 60 },
-{ name: 'Печенье песочное', category: '🍪 Печенье', measure: 'кг.', shelfLife: 90 },
-{ name: 'Пряники', category: '🍪 Печенье', measure: 'кг.', shelfLife: 60 },
-{ name: 'Вафли', category: '🍪 Печенье', measure: 'кг.', shelfLife: 240 },
-{ name: 'Галеты', category: '🍪 Печенье', measure: 'уп.', shelfLife: 180 },
-{ name: 'Крекер', category: '🍪 Печенье', measure: 'уп.', shelfLife: 180 },
-{ name: 'Сушки', category: '🍪 Печенье', measure: 'кг.', shelfLife: 120 },
-{ name: 'Баранки', category: '🍪 Печенье', measure: 'уп.', shelfLife: 15 },
-{ name: 'Крекеры с сыром', category: '🍪 Печенье', measure: 'уп.', shelfLife: 180 },
-{ name: 'Бисквитное печенье', category: '🍪 Печенье', measure: 'г.', shelfLife: 120 },
-
-// 🍰 Торты
-{ name: 'Торт Наполеон', category: '🍰 Торты', measure: 'шт.', shelfLife: 3 },
-{ name: 'Торт Медовик', category: '🍰 Торты', measure: 'шт.', shelfLife: 5 },
-{ name: 'Пирожное Картошка', category: '🍰 Торты', measure: 'шт.', shelfLife: 5 },
-{ name: 'Эклер', category: '🍰 Торты', measure: 'шт.', shelfLife: 3 },
-{ name: 'Чизкейк', category: '🍰 Торты', measure: 'шт.', shelfLife: 5 },
-{ name: 'Тирамису', category: '🍰 Торты', measure: 'шт.', shelfLife: 3 },
-{ name: 'Безе', category: '🍰 Торты', measure: 'г.', shelfLife: 14 },
-{ name: 'Маффины', category: '🍰 Торты', measure: 'шт.', shelfLife: 7 },
-{ name: 'Рулет бисквитный', category: '🍰 Торты', measure: 'шт.', shelfLife: 15 },
-{ name: 'Тарталетки', category: '🍰 Торты', measure: 'шт.', shelfLife: 2 },
-
-// 🍫 Сладости
-{ name: 'Шоколад молочный', category: '🍫 Сладости', measure: 'шт.', shelfLife: 365 },
-{ name: 'Шоколад горький', category: '🍫 Сладости', measure: 'шт.', shelfLife: 540 },
-{ name: 'Конфеты в коробке', category: '🍫 Сладости', measure: 'шт.', shelfLife: 270 },
-{ name: 'Карамель', category: '🍫 Сладости', measure: 'кг.', shelfLife: 365 },
-{ name: 'Леденцы', category: '🍫 Сладости', measure: 'уп.', shelfLife: 540 },
-{ name: 'Мармелад', category: '🍫 Сладости', measure: 'г.', shelfLife: 90 },
-{ name: 'Зефир', category: '🍫 Сладости', measure: 'г.', shelfLife: 60 },
-{ name: 'Пастила', category: '🍫 Сладости', measure: 'г.', shelfLife: 60 },
-{ name: 'Ирис', category: '🍫 Сладости', measure: 'г.', shelfLife: 180 },
-{ name: 'Шоколадные батончики', category: '🍫 Сладости', measure: 'шт.', shelfLife: 365 },
-
-// 🍯 Варенье/Мед
-{ name: 'Мед цветочный', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Варенье малиновое', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Джем клубничный', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Повидло', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Конфитюр', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Кленовый сироп', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 730 },
-{ name: 'Сироп топинамбура', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 365 },
-{ name: 'Арахисовая паста', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 270 },
-{ name: 'Шоколадная паста', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 365 },
-{ name: 'Урбеч', category: '🍯 Варенье/Мед', measure: 'г.', shelfLife: 180 },
-
-// 💧 Вода
-{ name: 'Вода 5л', category: '💧 Вода', measure: 'шт.', shelfLife: 365 },
-{ name: 'Вода газированная', category: '💧 Вода', measure: 'л.', shelfLife: 365 },
-{ name: 'Лечебная минералка', category: '💧 Вода', measure: 'л.', shelfLife: 365 },
-{ name: 'Вода со вкусом', category: '💧 Вода', measure: 'л.', shelfLife: 270 },
-{ name: 'Детская вода', category: '💧 Вода', measure: 'л.', shelfLife: 365 },
-{ name: 'Вода в стекле', category: '💧 Вода', measure: 'л.', shelfLife: 730 },
-{ name: 'Спортивная вода', category: '💧 Вода', measure: 'л.', shelfLife: 365 },
-{ name: 'Талая вода', category: '💧 Вода', measure: 'л.', shelfLife: 180 },
-{ name: 'Вода с магнием', category: '💧 Вода', measure: 'л.', shelfLife: 365 },
-{ name: 'Дистиллированная вода', category: '💧 Вода', measure: 'л.', shelfLife: 730 },
-
-// 🧃 Соки
-{ name: 'Яблочный сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Апельсиновый сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Томатный сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Нектар мультифрукт', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Клюквенный морс', category: '🧃 Соки', measure: 'л.', shelfLife: 270 },
-{ name: 'Вишневый нектар', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Ананасовый сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Гранатовый сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Березовый сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-{ name: 'Овощной микс сок', category: '🧃 Соки', measure: 'л.', shelfLife: 365 },
-
-// 🥤 Газировка
-{ name: 'Кола', category: '🥤 Газировка', measure: 'л.', shelfLife: 365 },
-{ name: 'Лимонад', category: '🥤 Газировка', measure: 'л.', shelfLife: 270 },
-{ name: 'Тоник', category: '🥤 Газировка', measure: 'л.', shelfLife: 365 },
-{ name: 'Холодный чай', category: '🥤 Газировка', measure: 'л.', shelfLife: 270 },
-{ name: 'Квас фильтров.', category: '🥤 Газировка', measure: 'л.', shelfLife: 180 },
-{ name: 'Тархун', category: '🥤 Газировка', measure: 'л.', shelfLife: 270 },
-{ name: 'Энергетик', category: '🥤 Газировка', measure: 'шт.', shelfLife: 540 },
-{ name: 'Имбирный эль', category: '🥤 Газировка', measure: 'л.', shelfLife: 365 },
-{ name: 'Байкал', category: '🥤 Газировка', measure: 'л.', shelfLife: 180 },
-{ name: 'Газировка без сахара', category: '🥤 Газировка', measure: 'л.', shelfLife: 270 },
-
-// ☕ Чай
-{ name: 'Чай в пакетиках', category: '☕ Чай', measure: 'уп.', shelfLife: 730 },
-{ name: 'Зеленый листовой', category: '☕ Чай', measure: 'г.', shelfLife: 730 },
-{ name: 'Иван-чай', category: '☕ Чай', measure: 'г.', shelfLife: 730 },
-{ name: 'Каркаде', category: '☕ Чай', measure: 'г.', shelfLife: 730 },
-{ name: 'Улун', category: '☕ Чай', measure: 'г.', shelfLife: 540 },
-{ name: 'Травяной сбор', category: '☕ Чай', measure: 'г.', shelfLife: 730 },
-{ name: 'Ройбуш', category: '☕ Чай', measure: 'г.', shelfLife: 730 },
-{ name: 'Фруктовый чай', category: '☕ Чай', measure: 'г.', shelfLife: 540 },
-{ name: 'Пуэр', category: '☕ Чай', measure: 'г.', shelfLife: 1825 },
-{ name: 'Матча', category: '☕ Чай', measure: 'г.', shelfLife: 365 },
-
-// ☕ Кофе
-{ name: 'Кофе растворимый', category: '☕ Кофе', measure: 'г.', shelfLife: 730 },
-{ name: 'Кофе в зернах', category: '☕ Кофе', measure: 'г.', shelfLife: 540 },
-{ name: 'Кофе молотый', category: '☕ Кофе', measure: 'г.', shelfLife: 365 },
-{ name: 'Кофе в капсулах', category: '☕ Кофе', measure: 'уп.', shelfLife: 450 },
-{ name: 'Кофе без кофеина', category: '☕ Кофе', measure: 'г.', shelfLife: 365 },
-{ name: 'Напиток 3в1', category: '☕ Кофе', measure: 'шт.', shelfLife: 365 },
-{ name: 'Цикорий', category: '☕ Кофе', measure: 'г.', shelfLife: 540 },
-{ name: 'Зеленый кофе', category: '☕ Кофе', measure: 'г.', shelfLife: 365 },
-{ name: 'Кофе для турки', category: '☕ Кофе', measure: 'г.', shelfLife: 270 },
-{ name: 'Кофе в дрипах', category: '☕ Кофе', measure: 'уп.', shelfLife: 365 },
-
-// ☕ Какао
-{ name: 'Какао-порошок', category: '☕ Какао', measure: 'г.', shelfLife: 365 },
-{ name: 'Горячий шоколад', category: '☕ Какао', measure: 'г.', shelfLife: 365 },
-{ name: 'Растворимое какао', category: '☕ Какао', measure: 'г.', shelfLife: 540 },
-{ name: 'Кэроб', category: '☕ Какао', measure: 'г.', shelfLife: 365 },
-{ name: 'Какао-масло', category: '☕ Какао', measure: 'г.', shelfLife: 730 },
-{ name: 'Шоколадная крошка', category: '☕ Какао', measure: 'г.', shelfLife: 365 },
-{ name: 'Какао-велла', category: '☕ Какао', measure: 'г.', shelfLife: 365 },
-{ name: 'Напиток какао готовый', category: '☕ Какао', measure: 'л.', shelfLife: 180 },
-{ name: 'Кусковое какао', category: '☕ Какао', measure: 'г.', shelfLife: 730 },
-{ name: 'Смесь для брауни', category: '☕ Какао', measure: 'уп.', shelfLife: 365 },
-
-// 🥛 Растительное молоко
-{ name: 'Овсяное молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 365 },
-{ name: 'Миндальное молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 365 },
-{ name: 'Кокосовое молоко', category: '🥛 Растительное молоко', measure: 'банка', shelfLife: 730 },
-{ name: 'Соевое молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 365 },
-{ name: 'Рисовое молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 270 },
-{ name: 'Фундучное молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 270 },
-{ name: 'Гречневое молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 270 },
-{ name: 'Кешью молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 270 },
-{ name: 'Банановое молоко', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 270 },
-{ name: 'Растительные сливки', category: '🥛 Растительное молоко', measure: 'л.', shelfLife: 180 },
-
-// 🥜 Орехи
-{ name: 'Грецкий орех', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Фундук', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Миндаль', category: '🥜 Орехи', measure: 'кг.', shelfLife: 270 },
-{ name: 'Кешью', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Кедровый орех', category: '🥜 Орехи', measure: 'г.', shelfLife: 90 },
-{ name: 'Курага', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Чернослив', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Изюм', category: '🥜 Орехи', measure: 'кг.', shelfLife: 180 },
-{ name: 'Финики', category: '🥜 Орехи', measure: 'кг.', shelfLife: 270 },
-{ name: 'Смесь орехов', category: '🥜 Орехи', measure: 'г.', shelfLife: 180 },
-
-// 🍿 Снеки
-{ name: 'Чипсы картоф.', category: '🍿 Снеки', measure: 'уп.', shelfLife: 270 },
-{ name: 'Сухарики', category: '🍿 Снеки', measure: 'уп.', shelfLife: 180 },
-{ name: 'Попкорн', category: '🍿 Снеки', measure: 'уп.', shelfLife: 180 },
-{ name: 'Кукурузные палочки', category: '🍿 Снеки', measure: 'уп.', shelfLife: 180 },
-{ name: 'Арахис соленый', category: '🍿 Снеки', measure: 'г.', shelfLife: 270 },
-{ name: 'Фисташки', category: '🍿 Снеки', measure: 'кг.', shelfLife: 270 },
-{ name: 'Соломка', category: '🍿 Снеки', measure: 'шт.', shelfLife: 180 },
-{ name: 'Чипсы нори', category: '🍿 Снеки', measure: 'уп.', shelfLife: 365 },
-{ name: 'Фруктовые чипсы', category: '🍿 Снеки', measure: 'г.', shelfLife: 365 },
-{ name: 'Семечки', category: '🍿 Снеки', measure: 'уп.', shelfLife: 120 },
-
-// 👶 Детское питание
-{ name: 'Фруктовое пюре', category: '👶 Детское питание', measure: 'шт.', shelfLife: 365 },
-{ name: 'Мясное пюре', category: '👶 Детское питание', measure: 'шт.', shelfLife: 730 },
-{ name: 'Каша безмолочная', category: '👶 Детское питание', measure: 'г.', shelfLife: 365 },
-{ name: 'Молочная смесь', category: '👶 Детское питание', measure: 'банка', shelfLife: 540 },
-{ name: 'Детский сок', category: '👶 Детское питание', measure: 'шт.', shelfLife: 365 },
-{ name: 'Детское печенье', category: '👶 Детское питание', measure: 'уп.', shelfLife: 270 },
-{ name: 'Овощное пюре', category: '👶 Детское питание', measure: 'шт.', shelfLife: 365 },
-{ name: 'Чай для мам', category: '👶 Детское питание', measure: 'уп.', shelfLife: 730 },
-{ name: 'Вода детская', category: '👶 Детское питание', measure: 'л.', shelfLife: 365 },
-{ name: 'Пудинг детский', category: '👶 Детское питание', measure: 'шт.', shelfLife: 90 },
-// 🥫 Консервы
-{ name: 'Томаты в собственном соку', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Томатная паста', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
-{ name: 'Томаты в собственном соку', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Томатная паста', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
-{ name: 'Горошек зеленый консервированный', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Кукуруза сладкая консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Тунец консервированный (в соку)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
-{ name: 'Фасоль красная консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Фасоль белая консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Оливки без косточек', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
-{ name: 'Маслины без косточек', category: '🥫 Консервы', measure: 'кг.', shelfLife: 1095 },
-{ name: 'Шампиньоны консервированные', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Кокосовое молоко (банка)', category: '🥫 Консервы', measure: 'л.', shelfLife: 545 },
-{ name: 'Ананасы консервированные (кольца)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Сгущенное молоко с сахаром', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 },
-{ name: 'Шпроты в масле', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Горбуша консервированная', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Огурцы маринованные (корнишоны)', category: '🥫 Консервы', measure: 'кг.', shelfLife: 730 },
-{ name: 'Паштет печеночный', category: '🥫 Консервы', measure: 'кг.', shelfLife: 365 }
-];
-
-// Unit conversion helpers (module-level so all components can use them)
+// Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
+// 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
+// Кухня (объём): ч.л. 5 мл, ст.л. 15 мл, стакан 250 мл. Ориентиры массы (г) для воды/муки/сахара — см. recipes.js.
 const UNIT_MAP = {
-  'г.': { type: 'mass', factor: 1 },      // base: grams
-  'кг.': { type: 'mass', factor: 1000 },  // kilograms -> grams
-  'мл.': { type: 'volume', factor: 1 },   // base: milliliters
-  'л.': { type: 'volume', factor: 1000 }, // liters -> milliliters
+  'мг.': { type: 'mass', factor: 0.001 },
+  'г.': { type: 'mass', factor: 1 },
+  'кг.': { type: 'mass', factor: 1000 },
+  'мл.': { type: 'volume', factor: 1 },
+  'л.': { type: 'volume', factor: 1000 },
+  'см³.': { type: 'volume', factor: 1 },
+  'ч.л.': { type: 'volume', factor: 5 },
+  'ст.л.': { type: 'volume', factor: 15 },
+  'стакан.': { type: 'volume', factor: 250 },
   'шт.': { type: 'count', factor: 1 }
 };
 
 const normalizeMeasure = (m) => {
   if (!m) return '';
-  const s = String(m).trim().toLowerCase();
-  if (s === 'г' || s === 'g') return 'г.';
-  if (s === 'кг' || s === 'kg') return 'кг.';
-  if (s === 'л' || s === 'l') return 'л.';
+  const raw = String(m).trim().toLowerCase();
+  const s = raw.replace(/\.$/, '');
+
   if (s === 'мл' || s === 'ml') return 'мл.';
+  if (s === 'л' || s === 'l') return 'л.';
+  if (s === 'мг' || s === 'mg') return 'мг.';
+  if (s === 'кг' || s === 'kg') return 'кг.';
+  if (s === 'г' || s === 'g') return 'г.';
+  if (s === 'см³' || s === 'см3' || s === 'cm3' || s === 'cm³') return 'см³.';
+  if (s === 'ч.л' || s === 'ч л' || s === 'tl' || s === 'tsp') return 'ч.л.';
+  if (s === 'ст.л' || s === 'ст л' || s === 'tbsp') return 'ст.л.';
+  if (s === 'стакан') return 'стакан.';
   if (s === 'шт' || s === 'pcs') return 'шт.';
-  return s.endsWith('.') ? s : s + (s === '' ? '' : '.');
+  return raw.endsWith('.') ? raw : raw ? raw + '.' : '';
 };
 
 const convertQuantity = (quantity, fromMeasure, toMeasure) => {
@@ -698,11 +69,16 @@ const roundToStep = (quantity, step) => {
 };
 
 const getQuantityStep = (measure) => {
-  if (measure === 'л.') return 0.1;
-  if (measure === 'мл.') return 50;
-  if (measure === 'кг.') return 0.1;
-  if (measure === 'г.') return 10;
-  if (measure === 'шт.') return 1;
+  const u = normalizeMeasure(measure);
+  if (u === 'л.') return 0.1;
+  if (u === 'мл.' || u === 'см³.') return 50;
+  if (u === 'кг.') return 0.1;
+  if (u === 'г.') return 10;
+  if (u === 'мг.') return 100;
+  if (u === 'ч.л.') return 0.5;
+  if (u === 'ст.л.') return 0.5;
+  if (u === 'стакан.') return 0.25;
+  if (u === 'шт.') return 1;
   return 1;
 };
 
@@ -712,7 +88,7 @@ const formatQuantityForDisplay = (quantity, measure) => {
   if (!isFinite(q)) return '0';
   const m = normalizeMeasure(measure);
   // For small-unit integer measures show integer
-  if (m === 'г.' || m === 'мл.' || m === 'шт.' || m === 'уп.') {
+  if (m === 'г.' || m === 'мл.' || m === 'см³.' || m === 'мг.' || m === 'шт.' || m === 'уп.') {
     return String(Math.round(q));
   }
 
@@ -1104,23 +480,41 @@ const formatTextWithLineBreaks = (text, maxLength = 15) => {
   return lines.join('\n');
 };
 
+const INVITE_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+const generateInviteCode = () =>
+  Array.from({ length: 6 }, () => INVITE_CODE_CHARS[Math.floor(Math.random() * INVITE_CODE_CHARS.length)]).join('');
+
+const hydrateAppState = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    pantryItems: (raw.pantryItems || []).map((item) => ({
+      ...item,
+      expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+    })),
+    shoppingItems: raw.shoppingItems || [],
+    favoriteProducts: raw.favoriteProducts || [],
+    favoriteRecipes: raw.favoriteRecipes || [],
+    customRecipes: raw.customRecipes || []
+  };
+};
+
 const OlivierApp = () => {
   const tg = window.Telegram?.WebApp;
   const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
 
-  // LocalStorage key helper
-  const getLocalKey = (userId) => `olivier_state_${userId || 'anon'}`;
+  const getLocalKey = (userId, fridgeId = null) =>
+    fridgeId ? `olivier_state_${userId || 'anon'}_fridge_${fridgeId}` : `olivier_state_${userId || 'anon'}`;
 
-  const loadLocalState = () => {
+  const loadLocalState = (userId, fridgeId = null) => {
     try {
-      const key = getLocalKey(telegramUserId);
+      const key = getLocalKey(userId, fridgeId);
       const raw = localStorage.getItem(key);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
 
-      // convert expiryDate strings back to Date objects where present
       if (parsed.pantryItems) {
-        parsed.pantryItems = parsed.pantryItems.map(item => ({
+        parsed.pantryItems = parsed.pantryItems.map((item) => ({
           ...item,
           expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
         }));
@@ -1132,13 +526,12 @@ const OlivierApp = () => {
     }
   };
 
-  const saveLocalState = (stateObj) => {
+  const saveLocalState = (stateObj, userId, fridgeId = null) => {
     try {
-      const key = getLocalKey(telegramUserId);
+      const key = getLocalKey(userId, fridgeId);
       const toSave = JSON.parse(JSON.stringify(stateObj));
-      // ensure dates are stored as ISO strings
       if (toSave.pantryItems) {
-        toSave.pantryItems = toSave.pantryItems.map(item => ({
+        toSave.pantryItems = toSave.pantryItems.map((item) => ({
           ...item,
           expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString() : null
         }));
@@ -1208,6 +601,14 @@ const OlivierApp = () => {
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [deletingRecipe, setDeletingRecipe] = useState(null);
 
+  const [sharedFridgeId, setSharedFridgeId] = useState(null);
+  const [sharedInviteCode, setSharedInviteCode] = useState(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [joinCodeDraft, setJoinCodeDraft] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+  const lastFridgeRemoteAtRef = useRef(null);
+  const skipNextFridgePollRef = useRef(false);
+
   const [addFormData, setAddFormData] = useState({
     name: '',
     category: '',
@@ -1269,74 +670,150 @@ const OlivierApp = () => {
 
   
 
-  // Загрузка состояния пользователя (сначала локально, затем при наличии — из Supabase)
+  // Загрузка: общий холодильник (fridge_*) или личный user_states + localStorage
   useEffect(() => {
-    const loadState = async () => {
-      // Попробуем сначала загрузить локально (быстрый отклик при перезагрузке)
-      const local = loadLocalState();
-      if (local) {
-        if (local.pantryItems) setPantryItems(local.pantryItems);
-        if (local.shoppingItems) setShoppingItems(local.shoppingItems);
-        if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
-        if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
-        if (local.customRecipes) setCustomRecipes(local.customRecipes);
-      }
+    let cancelled = false;
 
-      // Если есть Supabase и Telegram ID — обновим состояние с сервера (при наличии)
+    const applyLocalBundle = (local) => {
+      if (!local) return;
+      if (local.pantryItems) setPantryItems(local.pantryItems);
+      if (local.shoppingItems) setShoppingItems(local.shoppingItems);
+      if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
+      if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+      if (local.customRecipes) setCustomRecipes(local.customRecipes);
+    };
+
+    const loadState = async () => {
+      setSharedFridgeId(null);
+      setSharedInviteCode(null);
+      lastFridgeRemoteAtRef.current = null;
+
       if (!supabase || !telegramUserId) {
-        // Нет удалённого хранения — если локального не было, заполним дефолтом
+        const local = loadLocalState(telegramUserId, null);
+        applyLocalBundle(local);
         if (!local) setPantryItems(createDefaultPantryItems());
         setIsLoadingState(false);
         return;
       }
 
       try {
-        const { data, error } = await supabase
-          .from('user_states')
-          .select('state')
+        const { data: membership, error: memErr } = await supabase
+          .from('fridge_members')
+          .select('fridge_id')
           .eq('telegram_user_id', telegramUserId)
           .maybeSingle();
 
-        if (error) {
-          console.error('Error loading state', error);
-          setStateError('Не удалось загрузить данные');
-        }
+        if (memErr) console.error('fridge_members load', memErr);
 
-        if (data && data.state) {
-          const state = data.state;
-          if (state.pantryItems) {
-            setPantryItems(state.pantryItems.map(item => ({
-              ...item,
-              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
-            })));
+        if (cancelled) return;
+
+        if (membership?.fridge_id) {
+          const fid = membership.fridge_id;
+          setSharedFridgeId(fid);
+
+          const { data: grp } = await supabase
+            .from('fridge_groups')
+            .select('invite_code')
+            .eq('id', fid)
+            .maybeSingle();
+          if (!cancelled) setSharedInviteCode(grp?.invite_code || null);
+
+          const localFridge = loadLocalState(telegramUserId, fid);
+          if (localFridge) applyLocalBundle(localFridge);
+
+          const { data: fsRow, error: fsErr } = await supabase
+            .from('fridge_states')
+            .select('state, updated_at')
+            .eq('fridge_id', fid)
+            .maybeSingle();
+
+          if (fsErr) console.error('fridge_states load', fsErr);
+
+          if (cancelled) return;
+
+          if (fsRow?.state && typeof fsRow.state === 'object') {
+            const keys = Object.keys(fsRow.state);
+            if (keys.length > 0) {
+              const h = hydrateAppState(fsRow.state);
+              if (h) {
+                setPantryItems(h.pantryItems);
+                setShoppingItems(h.shoppingItems);
+                setFavoriteProducts(h.favoriteProducts);
+                setFavoriteRecipes(h.favoriteRecipes);
+                setCustomRecipes(h.customRecipes);
+              }
+              lastFridgeRemoteAtRef.current = fsRow.updated_at;
+            } else if (!localFridge) {
+              setPantryItems(createDefaultPantryItems());
+              setShoppingItems([]);
+              setFavoriteProducts([]);
+              setFavoriteRecipes([]);
+              setCustomRecipes([]);
+            }
+          } else if (!localFridge) {
+            setPantryItems(createDefaultPantryItems());
+            setShoppingItems([]);
+            setFavoriteProducts([]);
+            setFavoriteRecipes([]);
+            setCustomRecipes([]);
           }
-          if (state.shoppingItems) setShoppingItems(state.shoppingItems);
-          if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
-          if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
-          if (state.customRecipes) setCustomRecipes(state.customRecipes);
-        } else if (!local) {
-          // Первый вход пользователя — заполняем кладовую дефолтными продуктами
-          setPantryItems(createDefaultPantryItems());
+        } else {
+          const local = loadLocalState(telegramUserId, null);
+          applyLocalBundle(local);
+
+          const { data, error } = await supabase
+            .from('user_states')
+            .select('state')
+            .eq('telegram_user_id', telegramUserId)
+            .maybeSingle();
+
+          if (error) {
+            console.error('Error loading state', error);
+            setStateError('Не удалось загрузить данные');
+          }
+
+          if (cancelled) return;
+
+          if (data?.state) {
+            const state = data.state;
+            if (state.pantryItems) {
+              setPantryItems(
+                state.pantryItems.map((item) => ({
+                  ...item,
+                  expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+                }))
+              );
+            }
+            if (state.shoppingItems) setShoppingItems(state.shoppingItems);
+            if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
+            if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
+            if (state.customRecipes) setCustomRecipes(state.customRecipes);
+          } else if (!local) {
+            setPantryItems(createDefaultPantryItems());
+          }
         }
       } catch (e) {
         console.error(e);
         setStateError('Не удалось загрузить данные');
       } finally {
-        setIsLoadingState(false);
+        if (!cancelled) setIsLoadingState(false);
       }
     };
 
     loadState();
+    return () => {
+      cancelled = true;
+    };
   }, [telegramUserId]);
 
-  // Сохранение состояния пользователя локально и в Supabase (если доступен)
+  // Сохранение: общий холодильник → fridge_states; иначе user_states + localStorage
   useEffect(() => {
     if (isLoadingState) return;
 
     const saveState = async () => {
       try {
         const stateToSave = {
-          pantryItems: pantryItems.map(item => ({
+          pantryItems: pantryItems.map((item) => ({
             ...item,
             expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
           })),
@@ -1346,20 +823,34 @@ const OlivierApp = () => {
           customRecipes
         };
 
-        // Always save locally so data survives page reloads even without Supabase/Telegram
-        saveLocalState(stateToSave);
-
-        // If Supabase and Telegram ID available, sync to server
-        if (supabase && telegramUserId) {
-          await supabase
-            .from('user_states')
-            .upsert(
+        if (sharedFridgeId) {
+          saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
+          if (supabase && telegramUserId) {
+            const nowIso = new Date().toISOString();
+            await supabase.from('fridge_states').upsert(
               {
-                telegram_user_id: telegramUserId,
-                state: stateToSave
+                fridge_id: sharedFridgeId,
+                state: stateToSave,
+                updated_at: nowIso
               },
-              { onConflict: 'telegram_user_id' }
+              { onConflict: 'fridge_id' }
             );
+            lastFridgeRemoteAtRef.current = nowIso;
+            skipNextFridgePollRef.current = true;
+          }
+          return;
+        }
+
+        saveLocalState(stateToSave, telegramUserId, null);
+
+        if (supabase && telegramUserId) {
+          await supabase.from('user_states').upsert(
+            {
+              telegram_user_id: telegramUserId,
+              state: stateToSave
+            },
+            { onConflict: 'telegram_user_id' }
+          );
         }
       } catch (e) {
         console.error('Error saving state', e);
@@ -1367,11 +858,265 @@ const OlivierApp = () => {
     };
 
     saveState();
-  }, [telegramUserId, isLoadingState, pantryItems, shoppingItems, favoriteProducts, favoriteRecipes, customRecipes]);
+  }, [
+    telegramUserId,
+    isLoadingState,
+    sharedFridgeId,
+    pantryItems,
+    shoppingItems,
+    favoriteProducts,
+    favoriteRecipes,
+    customRecipes
+  ]);
+
+  // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
+  useEffect(() => {
+    if (!supabase || !telegramUserId || !sharedFridgeId || isLoadingState) return;
+
+    const pullRemote = async () => {
+      if (skipNextFridgePollRef.current) {
+        skipNextFridgePollRef.current = false;
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('fridge_states')
+          .select('state, updated_at')
+          .eq('fridge_id', sharedFridgeId)
+          .maybeSingle();
+        if (error || !data?.state) return;
+        if (
+          lastFridgeRemoteAtRef.current &&
+          data.updated_at &&
+          data.updated_at <= lastFridgeRemoteAtRef.current
+        ) {
+          return;
+        }
+        lastFridgeRemoteAtRef.current = data.updated_at;
+        const h = hydrateAppState(data.state);
+        if (!h) return;
+        setPantryItems(h.pantryItems);
+        setShoppingItems(h.shoppingItems);
+        setFavoriteProducts(h.favoriteProducts);
+        setFavoriteRecipes(h.favoriteRecipes);
+        setCustomRecipes(h.customRecipes);
+      } catch (e) {
+        console.error('fridge poll', e);
+      }
+    };
+
+    const id = setInterval(pullRemote, 20000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') pullRemote();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
 
   const showNotification = (message) => {
     setNotification(message);
     setTimeout(() => setNotification(''), 1000);
+  };
+
+  const createSharedFridge = async () => {
+    if (!supabase || !telegramUserId) {
+      showNotification('Доступно в Telegram при подключённом Supabase');
+      return;
+    }
+    setShareBusy(true);
+    try {
+      const { data: existing } = await supabase
+        .from('fridge_members')
+        .select('fridge_id')
+        .eq('telegram_user_id', telegramUserId)
+        .maybeSingle();
+      if (existing?.fridge_id) {
+        showNotification('Вы уже в общей кладовой');
+        return;
+      }
+      const stateToSave = {
+        pantryItems: pantryItems.map((item) => ({
+          ...item,
+          expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
+        })),
+        shoppingItems,
+        favoriteProducts,
+        favoriteRecipes,
+        customRecipes
+      };
+      let lastErr = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const code = generateInviteCode();
+        const { data: grp, error: e1 } = await supabase
+          .from('fridge_groups')
+          .insert({ invite_code: code, created_by_telegram_id: telegramUserId })
+          .select('id')
+          .single();
+        if (e1) {
+          lastErr = e1;
+          continue;
+        }
+        const fridgeId = grp.id;
+        const nowIso = new Date().toISOString();
+        const { error: e2 } = await supabase.from('fridge_states').insert({
+          fridge_id: fridgeId,
+          state: stateToSave,
+          updated_at: nowIso
+        });
+        if (e2) {
+          await supabase.from('fridge_groups').delete().eq('id', fridgeId);
+          lastErr = e2;
+          showNotification('Не удалось создать общую кладовую');
+          return;
+        }
+        const { error: e3 } = await supabase.from('fridge_members').insert({
+          fridge_id: fridgeId,
+          telegram_user_id: telegramUserId
+        });
+        if (e3) {
+          await supabase.from('fridge_groups').delete().eq('id', fridgeId);
+          showNotification('Не удалось добавить вас в группу');
+          return;
+        }
+        setSharedFridgeId(fridgeId);
+        setSharedInviteCode(code);
+        lastFridgeRemoteAtRef.current = nowIso;
+        showNotification('Создан код приглашения — отправьте его семье');
+        return;
+      }
+      console.error(lastErr);
+      showNotification('Не удалось создать код, попробуйте позже');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const joinSharedFridge = async () => {
+    const code = joinCodeDraft.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length < 4) {
+      showNotification('Введите код приглашения');
+      return;
+    }
+    if (!supabase || !telegramUserId) return;
+    setShareBusy(true);
+    try {
+      const { data: existing } = await supabase
+        .from('fridge_members')
+        .select('fridge_id')
+        .eq('telegram_user_id', telegramUserId)
+        .maybeSingle();
+      if (existing?.fridge_id) {
+        showNotification('Сначала выйдите из текущей общей кладовой');
+        return;
+      }
+      const { data: group, error: gErr } = await supabase
+        .from('fridge_groups')
+        .select('id')
+        .eq('invite_code', code)
+        .maybeSingle();
+      if (gErr || !group) {
+        showNotification('Код не найден');
+        return;
+      }
+      const { error: mErr } = await supabase.from('fridge_members').insert({
+        fridge_id: group.id,
+        telegram_user_id: telegramUserId
+      });
+      if (mErr) {
+        showNotification('Не удалось присоединиться');
+        return;
+      }
+      const { data: fsRow } = await supabase
+        .from('fridge_states')
+        .select('state, updated_at')
+        .eq('fridge_id', group.id)
+        .maybeSingle();
+      if (fsRow?.state) {
+        const h = hydrateAppState(fsRow.state);
+        if (h) {
+          setPantryItems(h.pantryItems);
+          setShoppingItems(h.shoppingItems);
+          setFavoriteProducts(h.favoriteProducts);
+          setFavoriteRecipes(h.favoriteRecipes);
+          setCustomRecipes(h.customRecipes);
+        }
+        lastFridgeRemoteAtRef.current = fsRow.updated_at;
+      }
+      setSharedFridgeId(group.id);
+      setSharedInviteCode(code);
+      setJoinCodeDraft('');
+      showNotification('Вы присоединились к общей кладовой');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const leaveSharedFridge = async () => {
+    if (!supabase || !telegramUserId || !sharedFridgeId) return;
+    setShareBusy(true);
+    const fid = sharedFridgeId;
+    try {
+      await supabase.from('fridge_members').delete().eq('telegram_user_id', telegramUserId);
+      const { count, error: cErr } = await supabase
+        .from('fridge_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('fridge_id', fid);
+      if (!cErr && count === 0) {
+        await supabase.from('fridge_groups').delete().eq('id', fid);
+      }
+      setSharedFridgeId(null);
+      setSharedInviteCode(null);
+      lastFridgeRemoteAtRef.current = null;
+
+      const { data: pers } = await supabase
+        .from('user_states')
+        .select('state')
+        .eq('telegram_user_id', telegramUserId)
+        .maybeSingle();
+      if (pers?.state) {
+        const st = pers.state;
+        if (st.pantryItems) {
+          setPantryItems(
+            st.pantryItems.map((item) => ({
+              ...item,
+              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+            }))
+          );
+        }
+        if (st.shoppingItems) setShoppingItems(st.shoppingItems);
+        if (st.favoriteProducts) setFavoriteProducts(st.favoriteProducts);
+        if (st.favoriteRecipes) setFavoriteRecipes(st.favoriteRecipes);
+        if (st.customRecipes) setCustomRecipes(st.customRecipes);
+      } else {
+        const local = loadLocalState(telegramUserId, null);
+        if (local) {
+          if (local.pantryItems) setPantryItems(local.pantryItems);
+          if (local.shoppingItems) setShoppingItems(local.shoppingItems);
+          if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
+          if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+          if (local.customRecipes) setCustomRecipes(local.customRecipes);
+        } else {
+          setPantryItems(createDefaultPantryItems());
+        }
+      }
+      showNotification('Вы вышли из общей кладовой');
+    } finally {
+      setShareBusy(false);
+      setShowShareModal(false);
+    }
+  };
+
+  const copySharedInviteCode = async () => {
+    if (!sharedInviteCode) return;
+    try {
+      await navigator.clipboard.writeText(sharedInviteCode);
+      showNotification('Код скопирован');
+    } catch {
+      showNotification(sharedInviteCode);
+    }
   };
 
   const handleDateClick = (item) => {
@@ -1941,7 +1686,18 @@ const OlivierApp = () => {
         </div>
       )}
       {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 flex items-center justify-center relative">
+      <div className="bg-white shadow-sm p-4 flex flex-col items-center justify-center relative gap-0.5">
+        {supabase && telegramUserId && (
+          <button
+            type="button"
+            onClick={() => setShowShareModal(true)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl text-blue-500 hover:bg-blue-50"
+            title="Семейный холодильник"
+            aria-label="Поделиться кладовой"
+          >
+            <Share2 size={22} />
+          </button>
+        )}
         <h1 className="text-lg font-semibold capitalize">
           {currentTab === 'pantry' && 'Кладовая'}
           {currentTab === 'favorites' && 'Избранное'}
@@ -1951,7 +1707,97 @@ const OlivierApp = () => {
             <span className="ml-2 text-orange-500">!</span>
           )}
         </h1>
+        {sharedFridgeId && (
+          <span className="text-xs text-blue-600 font-medium">Общая кладовая</span>
+        )}
       </div>
+
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-bold pr-8">Семейный холодильник</h2>
+              <button
+                type="button"
+                onClick={() => setShowShareModal(false)}
+                className="text-gray-500 shrink-0"
+                aria-label="Закрыть"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Одна кладовая, покупки, избранное и свои рецепты для всех, кто вошёл по коду. Изменения подтягиваются с сервера каждые ~20 секунд и при возврате в приложение.
+            </p>
+            {!supabase || !telegramUserId ? (
+              <p className="text-sm text-orange-600">Войдите через Telegram и настройте Supabase, чтобы пользоваться общей кладовой.</p>
+            ) : sharedFridgeId ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="text-sm font-medium text-gray-700 mb-1">Код приглашения</div>
+                  <div className="flex gap-2 items-center">
+                    <code className="flex-1 text-center text-lg font-mono tracking-widest bg-gray-100 rounded-xl py-3 px-2">
+                      {sharedInviteCode || '—'}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={copySharedInviteCode}
+                      disabled={!sharedInviteCode}
+                      className="bg-gray-200 text-gray-800 px-4 py-3 rounded-xl font-medium disabled:opacity-50"
+                    >
+                      Копировать
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={leaveSharedFridge}
+                  disabled={shareBusy}
+                  className="w-full border border-red-200 text-red-600 py-3 rounded-xl font-semibold disabled:opacity-50"
+                >
+                  {shareBusy ? '…' : 'Покинуть общую кладовую'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={createSharedFridge}
+                  disabled={shareBusy}
+                  className="w-full bg-blue-500 text-white py-3 rounded-xl font-semibold disabled:opacity-50"
+                >
+                  {shareBusy ? 'Подождите…' : 'Создать приглашение (текущие данные станут общими)'}
+                </button>
+                <div className="relative flex items-center gap-3">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs text-gray-400">или</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Код от семьи</label>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    autoCapitalize="characters"
+                    value={joinCodeDraft}
+                    onChange={(e) => setJoinCodeDraft(e.target.value.toUpperCase())}
+                    placeholder="Например AB12CD"
+                    className="w-full p-3 border border-gray-200 rounded-xl font-mono tracking-wide uppercase"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={joinSharedFridge}
+                  disabled={shareBusy}
+                  className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50"
+                >
+                  {shareBusy ? 'Подождите…' : 'Присоединиться по коду'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
   {/* Content */}
   <div className="p-4 pb-28" ref={contentRef}>
@@ -2558,15 +2404,9 @@ const OlivierApp = () => {
                   className={`w-full p-3 border border-gray-200 rounded-xl ${addFormData.autoFilled ? 'italic text-gray-600' : ''}`}
                 >
                   <option value="">Выберите категорию</option>
-                  <option value="🥛 Молочные">🥛 Молочные</option>
-                  <option value="🍞 Хлебобулочные">🍞 Хлебобулочные</option>
-                  <option value="🥦 Овощи">🥦 Овощи</option>
-                  <option value="🍎 Фрукты">🍎 Фрукты</option>
-                  <option value="🌾 Крупы">🌾 Крупы</option>
-                  <option value="🥩 Мясо">🥩 Мясо</option>
-                  <option value="🥚 Яйца">🥚 Яйца</option>
-                  <option value="🐟 Рыба">🐟 Рыба</option>
-                  <option value="🏷️ Прочее">🏷️ Прочее</option>
+                  {PRODUCT_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </div>
 
@@ -2785,7 +2625,7 @@ const OlivierApp = () => {
                   className="flex-1 bg-blue-500 text-white p-3 rounded-xl font-semibold flex items-center justify-center gap-2"
                 >
                   <ShoppingCart size={20} />
-                  Добавить недостающие продукты в корзину
+                  Добавить в корзину
                 </button>
               </div>
               

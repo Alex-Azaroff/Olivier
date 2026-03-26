@@ -1,174 +1,64 @@
 /*
-  Normalization rules for ingredient amounts to avoid leading-zero decimals:
-  - If measure is liters ('л.' or 'л') and amount < 1 => convert to milliliters ('мл.') by *1000.
-  - If measure is kilograms ('кг.' or 'кг') and amount < 1 => convert to grams ('г.') by *1000.
-  - If after conversion ml or g >= 1000 => convert back to liters/kg (divide by 1000) and keep up to 2 decimals.
-  - Other measures are left unchanged.
+  Каталог рецептов для правок без изменения кода приложения: src/data/recipes.json
+  (поле "recipes" — массив объектов; после правок пересоберите/перезапустите dev).
+
+  Про «таблицу»: одна Excel-строка на рецепт не вмещает списки ингредиентов и шагов без
+  JSON в ячейке или отдельных листов. JSON — удобный компромисс; при желании можно
+  вести Google Таблицу и скриптом выгружать в recipes.json.
+
+  Соотношения единиц (конвертация в UI — UNIT_MAP в component.jsx):
+  Масса: 1 кг = 1000 г; 1 г = 1000 мг; и т.д.
+  Объём: 1 л = 1000 мл; 1 мл = 1 см³.
+  Кухня: ч.л. 5 мл; ст.л. 15 мл; стакан 250 мл (ориентиры массы — в комментариях к UNIT_MAP).
+
+  Нормализация ингредиентов (при загрузке каталога):
+  - Литр/кг с amount < 1 → мл/г (*1000).
+  - мл/г с amount >= 1000 → л/кг (/1000).
+  - «мл» не путаем с «л» (measureKind).
 */
 
-const RAW_RECIPES = [
-  {
-    id: 1,
-    name: 'Омлет с овощами',
-    difficulty: 'легкий',
-    time: 15,
-    ingredients: [
-      { name: 'Яйца', amount: 3, measure: 'шт.' },
-      { name: 'Молоко', amount: 0.1, measure: 'л.' },
-      { name: 'Помидоры', amount: 0.2, measure: 'кг.' },
-      { name: 'Лук', amount: 0.1, measure: 'кг.' }
-    ],
-    steps: [
-      { text: 'Взбить яйца с молоком', image: '' },
-      { text: 'Нарезать овощи', image: '' },
-      { text: 'Жарить на сковороде 5 минут', image: '' }
-    ],
-    image: '/assets/omelet.jpeg'
-  },
-  {
-    id: 2,
-    name: 'Рисовая каша',
-    difficulty: 'легкий',
-    time: 20,
-    ingredients: [
-      { name: 'Рис', amount: 200, measure: 'г.' },
-      { name: 'Молоко', amount: 0.5, measure: 'л.' },
-      { name: 'Сахар', amount: 50, measure: 'г.' }
-    ],
-    steps: [
-      { text: 'Промыть рис', image: '' },
-      { text: 'Варить в молоке 15 минут', image: '' },
-      { text: 'Добавить сахар', image: '' }
-    ],
-    image: '/assets/rice-porridge.jpeg'
-  },
-  {
-    id: 3,
-    name: 'Салат с огурцами',
-    difficulty: 'легкий',
-    time: 10,
-    ingredients: [
-      { name: 'Огурцы', amount: 0.5, measure: 'кг.' },
-      { name: 'Помидоры', amount: 0.3, measure: 'кг.' },
-      { name: 'Лук', amount: 0.1, measure: 'кг.' }
-    ],
-    steps: [
-      { text: 'Нарезать овощи', image: '' },
-      { text: 'Перемешать', image: '' },
-      { text: 'Посолить по вкусу', image: '' }
-    ],
-    description: 'Хорошая альтернатива классическому греческому салату.',
-    image: '/assets/vegetable-salad.jpeg'
-  }
-];
-
-// Лазанья: добавляем рецепт с шагами и путями к изображениям в подпапке public/assets/recipes/lasagna
-RAW_RECIPES.push({
-  id: 4,
-  name: 'Лазанья болоньезе (ВкусВилл)',
-  difficulty: 'средний',
-  time: 75,
-  ingredients: [
-    { name: 'Листы для лазаньи', amount: 10, measure: 'шт.' },
-    { name: 'Мясной фарш', amount: 0.36, measure: 'кг.' },
-    { name: 'Томаты в собственном соку', amount: 0.75, measure: 'кг.' },
-    { name: 'Молоко пастеризованное', amount: 0.8, measure: 'л.' },
-    { name: 'Пармезан', amount: 0.1, measure: 'кг.' },
-    { name: 'Масло сливочное 82.5%', amount: 0.05, measure: 'кг.' },
-    { name: 'Мука пшеничная', amount: 0.06, measure: 'кг.' },
-    { name: 'Лук репчатый', amount: 1, measure: 'шт.' }, // Можно перевести в кг (0.1 кг), если в базе лук считается в кг
-    { name: 'Чеснок', amount: 0.015, measure: 'кг.' },
-    { name: 'Томатная паста', amount: 0.06, measure: 'кг.' },
-    { name: 'Оливковое масло EV', amount: 0.015, measure: 'л.' },
-    { name: 'Мускатный орех', amount: 0.002, measure: 'г.' },
-    { name: 'Орегано сушеный', amount: 0.002, measure: 'г.' },
-    { name: 'Базилик сушеный', amount: 0.002, measure: 'г.' },
-    { name: 'Соль поваренная', amount: 0.005, measure: 'кг.' },
-    { name: 'Сахар-песок', amount: 0.01, measure: 'кг.' }
-  ],
-  steps: [
-    { 
-      text: 'Мелко нарезать лук и чеснок, обжарить на оливковом масле до прозрачности.', 
-      image: '/assets/recipes/lasagna/step1.jpeg' 
-    },
-    { 
-      text: 'Добавить фарш к овощам и обжаривать до золотистого цвета, разбивая комочки.', 
-      image: '/assets/recipes/lasagna/step2.jpeg' 
-    },
-    { 
-      text: 'Влить томаты в собственном соку и добавить томатную пасту. Посолить, добавить сахар и сухие травы. Тушить 30 минут, в конце добавить свежую зелень.', 
-      image: '/assets/recipes/lasagna/step3.jpeg' 
-    },
-    { 
-      text: 'Для соуса бешамель обжарить муку в кастрюле до орехового аромата, добавить сливочное масло и перемешать.', 
-      image: '/assets/recipes/lasagna/step4.jpeg' 
-    },
-    { 
-      text: 'Постепенно вливать теплое молоко в мучную смесь, постоянно помешивая венчиком.', 
-      image: '/assets/recipes/lasagna/step5.jpeg' 
-    },
-    { 
-      text: 'Добавить соль и мускатный орех, варить соус до загустения, затем снять с огня.', 
-      image: '/assets/recipes/lasagna/step6.jpeg' 
-    },
-    { 
-      text: 'Смазать дно формы соусом бешамель или маслом.', 
-      image: '/assets/recipes/lasagna/step7.jpeg' 
-    },
-    { 
-      text: 'Выложить слоями: листы лазаньи, мясной соус болоньезе, затем соус бешамель.', 
-      image: '/assets/recipes/lasagna/step8.jpeg' 
-    },
-    { 
-      text: 'Повторить слои несколько раз. Верхний слой залить остатками бешамеля и густо посыпать тертым пармезаном.', 
-      image: '/assets/recipes/lasagna/step9.jpeg' 
-    },
-    { 
-      text: 'Запекать в разогретой до 180°C духовке в течение 20–25 минут.', 
-      image: '/assets/recipes/lasagna/step10.jpeg' 
-    }
-  ],
-  image: '/assets/recipes/lasagna/vkusvill_lasagna.jpeg'
-});
+import recipeCatalog from './recipes.json';
 
 function roundIfNeeded(n) {
   if (Number.isInteger(n)) return n;
-  // Keep up to 2 decimal places, but trim trailing zeros
   return parseFloat(n.toFixed(2));
 }
 
-function normalizeIngredient(ing) {
-  let { name, amount, measure } = { ...ing };
-  const m = (measure || '').toLowerCase();
+/** Без двусмысленности «мл» vs «л», «мг» vs «г» */
+function measureKind(measure) {
+  const raw = (measure || '').trim().toLowerCase();
+  const x = raw.replace(/\.$/, '').replace(/\s+/g, '');
 
-  // handle liters
-  if (m.includes('л')) {
-    // convert fractions of liters to ml
-    if (amount > 0 && amount < 1) {
-      amount = Math.round(amount * 1000);
-      measure = 'мл.';
-    }
-    // if currently ml and >= 1000, convert to liters
-    if (measure && measure.toLowerCase().includes('мл')) {
-      if (amount >= 1000) {
-        amount = roundIfNeeded(amount / 1000);
-        measure = 'л.';
-      }
-    }
+  if (x === 'мл' || x === 'ml') return 'ml';
+  if (x === 'л' || x === 'l') return 'l';
+  if (x === 'мг' || x === 'mg') return 'mg';
+  if (x === 'кг' || x === 'kg') return 'kg';
+  if (x === 'г' || x === 'g') return 'g';
+
+  return 'other';
+}
+
+function normalizeIngredient(ing) {
+  let { amount, measure } = { ...ing };
+
+  if (measureKind(measure) === 'l' && amount > 0 && amount < 1) {
+    amount = Math.round(amount * 1000);
+    measure = 'мл.';
   }
 
-  // handle kilograms
-  if (m.includes('кг')) {
-    if (amount > 0 && amount < 1) {
-      amount = Math.round(amount * 1000);
-      measure = 'г.';
-    }
-    if (measure && measure.toLowerCase().includes('г')) {
-      if (amount >= 1000) {
-        amount = roundIfNeeded(amount / 1000);
-        measure = 'кг.';
-      }
-    }
+  if (measureKind(measure) === 'ml' && amount >= 1000) {
+    amount = roundIfNeeded(amount / 1000);
+    measure = 'л.';
+  }
+
+  if (measureKind(measure) === 'kg' && amount > 0 && amount < 1) {
+    amount = Math.round(amount * 1000);
+    measure = 'г.';
+  }
+
+  if (measureKind(measure) === 'g' && amount >= 1000) {
+    amount = roundIfNeeded(amount / 1000);
+    measure = 'кг.';
   }
 
   return { ...ing, amount, measure };
@@ -179,9 +69,9 @@ function normalizeIngredientsList(list) {
   return list.map(normalizeIngredient);
 }
 
-export const RECIPES_DB = RAW_RECIPES.map(r => ({
+const RAW_RECIPES = Array.isArray(recipeCatalog.recipes) ? recipeCatalog.recipes : [];
+
+export const RECIPES_DB = RAW_RECIPES.map((r) => ({
   ...r,
   ingredients: normalizeIngredientsList(r.ingredients)
 }));
-
-
