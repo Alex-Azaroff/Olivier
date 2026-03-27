@@ -503,6 +503,7 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
               <div className="flex flex-wrap gap-1 overflow-hidden max-h-[52px]">
                 {visible.map((ingredient, index) => {
                   const status = getIngredientStatus(ingredient);
+                  const isLastVisible = index === visible.length - 1;
                   return (
                     <span
                       key={index}
@@ -512,14 +513,10 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
                       {status.status === 'partial' && (
                         ` (нед: ${formatQuantityForDisplay(Math.max(0, ingredient.amount - (status.available || 0)), ingredient.measure)}${ingredient.measure})`
                       )}
+                      {hiddenCount > 0 && isLastVisible && ` и ещё ${hiddenCount}`}
                     </span>
                   );
                 })}
-                {hiddenCount > 0 && (
-                  <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-500">
-                    +{hiddenCount} ещё
-                  </span>
-                )}
               </div>
             );
           })()}
