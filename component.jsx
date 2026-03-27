@@ -1686,24 +1686,18 @@ const OlivierApp = () => {
         </div>
       )}
       {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 pr-14 flex flex-col items-center justify-center relative gap-0.5">
-        <button
-          type="button"
-          onClick={() => setShowShareModal(true)}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl hover:bg-blue-50 ${
-            supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
-          }`}
-          title={
-            !telegramUserId
-              ? 'Семейный холодильник — откройте из Telegram'
-              : !supabase
-                ? 'Нужны переменные Supabase в сборке (Vercel)'
-                : 'Семейный холодильник'
-          }
-          aria-label="Поделиться кладовой"
-        >
-          <Share2 size={22} />
-        </button>
+      <div className="bg-white shadow-sm p-4 flex flex-col items-center justify-center relative gap-0.5">
+        {supabase && telegramUserId && (
+          <button
+            type="button"
+            onClick={() => setShowShareModal(true)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl text-blue-500 hover:bg-blue-50"
+            title="Семейный холодильник"
+            aria-label="Поделиться кладовой"
+          >
+            <Share2 size={22} />
+          </button>
+        )}
         <h1 className="text-lg font-semibold capitalize">
           {currentTab === 'pantry' && 'Кладовая'}
           {currentTab === 'favorites' && 'Избранное'}
@@ -1736,23 +1730,7 @@ const OlivierApp = () => {
               Одна кладовая, покупки, избранное и свои рецепты для всех, кто вошёл по коду. Изменения подтягиваются с сервера каждые ~20 секунд и при возврате в приложение.
             </p>
             {!supabase || !telegramUserId ? (
-              <div className="space-y-3 text-sm text-orange-700 bg-orange-50 rounded-xl p-4">
-                {!telegramUserId && (
-                  <p>
-                    <span className="font-semibold">Откройте приложение из Telegram</span> (кнопка / меню бота → Mini App). В обычном браузере Telegram не передаёт ваш аккаунт, поэтому общая кладовая недоступна.
-                  </p>
-                )}
-                {telegramUserId && !supabase && (
-                  <p>
-                    <span className="font-semibold">Supabase не подключён к этой сборке.</span> В Vercel → Project → Settings → Environment Variables для <strong>Production</strong> задайте{' '}
-                    <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_URL</code> и{' '}
-                    <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_ANON_KEY</code>, затем сделайте redeploy.
-                  </p>
-                )}
-                {!telegramUserId && supabase && (
-                  <p className="text-gray-600">После открытия из Telegram кнопка станет синей — можно создавать код или вводить код семьи.</p>
-                )}
-              </div>
+              <p className="text-sm text-orange-600">Войдите через Telegram и настройте Supabase, чтобы пользоваться общей кладовой.</p>
             ) : sharedFridgeId ? (
               <div className="space-y-4">
                 <div>
