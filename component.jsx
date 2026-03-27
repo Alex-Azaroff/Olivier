@@ -1344,6 +1344,27 @@ const OlivierApp = () => {
     linkedSharedFridgeId
   ]);
 
+  /** Слияние JSON из fridge_states (блюда, покупки, избранное) с защитой по updated_at */
+  const applyRemoteFridgeJson = useCallback((rawState, updatedAt) => {
+    if (!rawState || typeof rawState !== 'object') return;
+    if (
+      lastFridgeRemoteAtRef.current &&
+      updatedAt &&
+      updatedAt <= lastFridgeRemoteAtRef.current
+    ) {
+      return;
+    }
+    lastFridgeRemoteAtRef.current = updatedAt;
+    const h = hydrateAppState(rawState);
+    if (!h) return;
+    setPreparedMeals(h.preparedMeals || []);
+    setShoppingItems(h.shoppingItems || []);
+    setFavoriteProducts(h.favoriteProducts || []);
+    setFavoriteRecipes(h.favoriteRecipes || []);
+    if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+    setCustomRecipes(h.customRecipes || []);
+  }, []);
+
   // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
   useEffect(() => {
     if (!supabase || !telegramUserId || !sharedFridgeId || isLoadingState) return;
@@ -1366,23 +1387,9 @@ const OlivierApp = () => {
         }
         const inv = await fetchPantryInventory(sharedFridgeId);
         setPantryItems(inv);
-        if (
-          !data?.state ||
-          (lastFridgeRemoteAtRef.current &&
-            data.updated_at &&
-            data.updated_at <= lastFridgeRemoteAtRef.current)
-        ) {
-          return;
+        if (data?.state && data.updated_at) {
+          applyRemoteFridgeJson(data.state, data.updated_at);
         }
-        lastFridgeRemoteAtRef.current = data.updated_at;
-        const h = hydrateAppState(data.state);
-        if (!h) return;
-        setShoppingItems(h.shoppingItems);
-        setFavoriteProducts(h.favoriteProducts);
-        setFavoriteRecipes(h.favoriteRecipes);
-        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-        setCustomRecipes(h.customRecipes);
-        setPreparedMeals(h.preparedMeals || []);
       } catch (e) {
         console.error('fridge poll', e);
       }
@@ -1397,7 +1404,7 @@ const OlivierApp = () => {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
+  }, [supabase, telegramUserId, sharedFridgeId, isLoadingState, applyRemoteFridgeJson]);
 
   // Realtime: кладовая из таблицы inventory (другой участник меняет продукты)
   useEffect(() => {
@@ -1418,6 +1425,34 @@ const OlivierApp = () => {
       supabase.removeChannel(channel);
     };
   }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
+
+  // Realtime: fridge_states (готовые блюда, списки и т.д. — то же, что в JSON, не в inventory)
+  useEffect(() => {
+    if (!supabase || !sharedFridgeId || !telegramUserId || isLoadingState) return;
+    const fid = sharedFridgeId;
+    const channel = supabase
+      .channel(`fridge_states_rt_${fid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'fridge_states',
+          filter: `fridge_id=eq.${fid}`
+        },
+        (payload) => {
+          const row = payload.new;
+          if (!row || typeof row !== 'object') return;
+          if (row.state && row.updated_at) {
+            applyRemoteFridgeJson(row.state, row.updated_at);
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, telegramUserId, sharedFridgeId, isLoadingState, applyRemoteFridgeJson]);
 
   const showNotification = (message, durationMs = 1000) => {
     setNotification(message);
