@@ -3,7 +3,7 @@ import { Heart, Home, Book, BookOpen, ShoppingCart, User, Plus, Edit3, Trash2, C
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { NotFoundException } from '@zxing/library';
 import { supabase } from './src/supabaseClient';
-import { RECIPES_DB } from './src/data/recipes';
+// recipes.json больше не используется — единый источник Supabase
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
 import { MEAL_CATEGORIES, MEAL_DEFAULT_DAYS_BY_CATEGORY } from './src/data/meals';
 
@@ -457,15 +457,16 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
          }}>
       <div className="flex gap-3">
         {/* Картинка */}
-        <div 
-          className="w-16 h-16 bg-gray-200 rounded-lg flex-shrink-0"
-        >
-          {recipe.image && (
-            <img 
-              src={recipe.image} 
+        <div className="w-16 h-16 bg-gray-100 rounded-lg flex-shrink-0 overflow-hidden flex items-center justify-center">
+          {recipe.image ? (
+            <img
+              src={recipe.image}
               alt={recipe.name}
               className="w-full h-full object-cover rounded-lg"
+              onError={(e) => { e.target.style.display = 'none'; }}
             />
+          ) : (
+            <span className="text-2xl">🍽️</span>
           )}
         </div>
 
@@ -1842,6 +1843,44 @@ const OlivierApp = () => {
     loadRecipeLibrary();
   }, [showRecipeLibrary, currentTab, loadRecipeLibrary]);
 
+  // Загрузка рецептов при старте приложения (до входа на вкладку рецептов)
+  useEffect(() => {
+    if (!supabase) return;
+    loadRecipeLibrary();
+  }, [loadRecipeLibrary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Импорт рецепта по Telegram deep link (start_param=recipe_UUID)
+  useEffect(() => {
+    const startParam = tg?.initDataUnsafe?.start_param;
+    if (!startParam?.startsWith('recipe_')) return;
+    const recipeId = startParam.replace('recipe_', '');
+    if (!supabase || !recipeId) return;
+
+    supabase
+      .from('recipes')
+      .select('id,name,description,time,difficulty,image,ingredients,steps,tags')
+      .eq('id', recipeId)
+      .single()
+      .then(({ data, error }) => {
+        if (error || !data) return;
+        const normalized = {
+          id: data.id,
+          name: data.name,
+          description: data.description || '',
+          time: data.time || 0,
+          difficulty: data.difficulty || '',
+          image: data.image || '',
+          ingredients: Array.isArray(data.ingredients) ? data.ingredients : [],
+          steps: Array.isArray(data.steps) ? data.steps : [],
+          tags: data.tags || [],
+        };
+        setSelectedRecipe(normalized);
+        setShowRecipeModal(true);
+        setCurrentTab('recipes');
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // одноразово при монтировании
+
   const toggleLibraryFavorite = async (recipe) => {
     if (!supabase || !telegramUserId) {
       showNotification('Избранное доступно в Telegram при подключённом Supabase');
@@ -1986,8 +2025,7 @@ const OlivierApp = () => {
 
   const getAvailableRecipes = () => {
     // Единый источник: все рецепты из Supabase + пользовательские рецепты
-    // Если Supabase ещё не загружен — используем локальный RECIPES_DB как фолбэк
-    const catalogRecipes = recipeLibrary.length > 0 ? recipeLibrary : RECIPES_DB;
+    const catalogRecipes = recipeLibrary;
     const allRecipes = [...catalogRecipes, ...customRecipes];
 
     // дедупликация по id
@@ -3958,18 +3996,47 @@ const OlivierApp = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[80]" onClick={() => setShowRecipeModal(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">{selectedRecipe.name}</h2>
-              <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold flex-1 mr-2">{selectedRecipe.name}</h2>
+              <div className="flex items-center gap-1">
+                {/* Поделиться */}
+                {typeof selectedRecipe.id === 'string' && (
+                  <button
+                    type="button"
+                    title="Поделиться рецептом"
+                    className="p-2 rounded-xl text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                    onClick={() => {
+                      const link = `https://t.me/ZayKypi_Bot?startapp=recipe_${selectedRecipe.id}`;
+                      const text = `Посмотри мой рецепт: ${selectedRecipe.name}`;
+                      if (tg?.switchInlineQuery) {
+                        try {
+                          tg.switchInlineQuery(`recipe_${selectedRecipe.id}`, ['users', 'groups', 'channels']);
+                          return;
+                        } catch (_) { /* fallback */ }
+                      }
+                      if (tg?.openTelegramLink) {
+                        tg.openTelegramLink(
+                          `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
+                        );
+                      } else {
+                        navigator.clipboard?.writeText(link)
+                          .then(() => showNotification('Ссылка скопирована!'))
+                          .catch(() => showNotification(link));
+                      }
+                    }}
+                  >
+                    <Share2 size={20} />
+                  </button>
+                )}
+
+                {/* Избранное */}
                 <button
                   type="button"
                   onClick={() => {
-                    // Если рецепт из Supabase (uuid строкой) — пишем в user_favorites
                     if (typeof selectedRecipe.id === 'string') {
                       toggleLibraryFavorite(selectedRecipe);
-                      return;
+                    } else {
+                      toggleFavoriteRecipe(selectedRecipe);
                     }
-                    // иначе — локальное избранное
-                    toggleFavoriteRecipe(selectedRecipe);
                   }}
                   className={`p-2 rounded-xl transition-colors ${
                     (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
@@ -3989,20 +4056,37 @@ const OlivierApp = () => {
                     }
                   />
                 </button>
-                <button
-                  onClick={() => setShowRecipeModal(false)}
-                  className="text-gray-500"
-                >
+
+                <button onClick={() => setShowRecipeModal(false)} className="p-2 text-gray-500">
                   <X size={24} />
                 </button>
               </div>
             </div>
-            
-            <img 
-              src={selectedRecipe.image} 
-              alt={selectedRecipe.name}
-              className="w-full h-48 rounded-xl object-cover mb-3"
-            />
+
+            {/* Кнопка "Добавить в мою книгу" (для рецептов открытых по шерингу) */}
+            {typeof selectedRecipe.id === 'string' && !libraryFavoriteIds.has(selectedRecipe.id) && (
+              <button
+                onClick={() => toggleLibraryFavorite(selectedRecipe)}
+                className="w-full mb-3 bg-green-500 text-white p-3 rounded-xl font-semibold flex items-center justify-center gap-2"
+              >
+                <BookOpen size={18} />
+                Добавить в мою книгу
+              </button>
+            )}
+
+            {/* Картинка рецепта с фолбэком */}
+            {selectedRecipe.image ? (
+              <img
+                src={selectedRecipe.image}
+                alt={selectedRecipe.name}
+                className="w-full h-48 rounded-xl object-cover mb-3"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="w-full h-32 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300 text-5xl mb-3">🍽️</div>
+            )}
             
             {selectedRecipe.description && (
               <p className="text-sm text-gray-600 mb-3">
