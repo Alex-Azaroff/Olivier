@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "categories": [
+    { "name": "Суп", "defaultDays": 3 },
+    { "name": "Гарнир", "defaultDays": 1 },
+    { "name": "Мясо", "defaultDays": 1 },
+    { "name": "Рыба", "defaultDays": 1 },
+    { "name": "Салат", "defaultDays": 2 },
+    { "name": "Закуски", "defaultDays": 1 },
+    { "name": "Напитки", "defaultDays": 1 },
+    { "name": "Десерт", "defaultDays": 1 }
+  ]
+}
+

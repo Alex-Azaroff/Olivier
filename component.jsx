@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2, ScanLine, Loader2 } from 'lucide-react';
+import { Heart, Home, Book, BookOpen, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, Share2, ScanLine, Loader2, Upload } from 'lucide-react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { NotFoundException } from '@zxing/library';
 import { supabase } from './src/supabaseClient';
 import { RECIPES_DB } from './src/data/recipes';
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
+import { MEAL_CATEGORIES, MEAL_DEFAULT_DAYS_BY_CATEGORY } from './src/data/meals';
 
 // Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
 // 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
@@ -580,12 +581,28 @@ const INVITE_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const generateInviteCode = () =>
   Array.from({ length: 6 }, () => INVITE_CODE_CHARS[Math.floor(Math.random() * INVITE_CODE_CHARS.length)]).join('');
 
+/** Зачёркивание в plain text (как визуально в списке) — комбинирующий штрих после каждого символа */
+const U_COMBINING_LONG_STRIKE = '\u0336';
+const plainTextStrikethrough = (s) =>
+  [...String(s)].map((ch) => (ch === '\n' || ch === '\r' ? ch : ch + U_COMBINING_LONG_STRIKE)).join('');
+
+const formatShoppingExportLine = (item) => {
+  const body = `${item.name} (${item.quantity} ${item.measure})${item.note ? ` - ${item.note}` : ''}`;
+  const text = item.completed ? plainTextStrikethrough(body) : body;
+  return `${item.completed ? '✓' : '•'} ${text}`;
+};
+
 const hydrateAppState = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   return {
     pantryItems: (raw.pantryItems || []).map((item) => ({
       ...item,
       expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+    })),
+    preparedMeals: (raw.preparedMeals || []).map((meal) => ({
+      ...meal,
+      preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+      expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
     })),
     shoppingItems: raw.shoppingItems || [],
     favoriteProducts: raw.favoriteProducts || [],
@@ -597,6 +614,50 @@ const hydrateAppState = (raw) => {
 const OlivierApp = () => {
   const tg = window.Telegram?.WebApp;
   const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
+
+  /** В Telegram — отступ от верха WebView (contentSafeArea / запас); до mount эффекта не оставлять 10px */
+  const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
+    typeof window !== 'undefined' && window.Telegram?.WebApp ? 46 : 0
+  );
+
+  useEffect(() => {
+    const w = window.Telegram?.WebApp;
+    const sync = () => {
+      if (!w) {
+        setTelegramHeaderPadPx(0);
+        return;
+      }
+      const c = Number(w.contentSafeAreaInset?.top);
+      const s = Number(w.safeAreaInset?.top);
+      const fromApi = Math.max(
+        Number.isFinite(c) ? c : 0,
+        Number.isFinite(s) ? s : 0
+      );
+      if (fromApi > 0) {
+        setTelegramHeaderPadPx(Math.ceil(fromApi) + 6);
+        return;
+      }
+      setTelegramHeaderPadPx(46);
+    };
+    sync();
+    if (!w) return undefined;
+    w.onEvent?.('viewportChanged', sync);
+    try {
+      w.onEvent?.('safeAreaChanged', sync);
+      w.onEvent?.('contentSafeAreaChanged', sync);
+    } catch (_) {
+      /* старые клиенты */
+    }
+    return () => {
+      w.offEvent?.('viewportChanged', sync);
+      try {
+        w.offEvent?.('safeAreaChanged', sync);
+        w.offEvent?.('contentSafeAreaChanged', sync);
+      } catch (_) {
+        /* */
+      }
+    };
+  }, []);
 
   const getLocalKey = (userId, fridgeId = null) =>
     fridgeId ? `olivier_state_${userId || 'anon'}_fridge_${fridgeId}` : `olivier_state_${userId || 'anon'}`;
@@ -612,6 +673,13 @@ const OlivierApp = () => {
         parsed.pantryItems = parsed.pantryItems.map((item) => ({
           ...item,
           expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+        }));
+      }
+      if (parsed.preparedMeals) {
+        parsed.preparedMeals = parsed.preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+          expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
         }));
       }
       return parsed;
@@ -631,6 +699,13 @@ const OlivierApp = () => {
           expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString() : null
         }));
       }
+      if (toSave.preparedMeals) {
+        toSave.preparedMeals = toSave.preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? new Date(meal.preparedDate).toISOString() : null,
+          expiresAt: meal.expiresAt ? new Date(meal.expiresAt).toISOString() : null
+        }));
+      }
       localStorage.setItem(key, JSON.stringify(toSave));
     } catch (e) {
       console.error('Error saving local state', e);
@@ -638,10 +713,12 @@ const OlivierApp = () => {
   };
 
   const [currentTab, setCurrentTab] = useState('pantry');
+  const [pantrySubTab, setPantrySubTab] = useState('products'); // 'products' | 'meals'
   const contentRef = useRef(null);
   const [isLoadingState, setIsLoadingState] = useState(true);
   const [stateError, setStateError] = useState(null);
   const [pantryItems, setPantryItems] = useState([]);
+  const [preparedMeals, setPreparedMeals] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([
     {
       id: 1,
@@ -683,6 +760,12 @@ const OlivierApp = () => {
   const [favoriteProducts, setFavoriteProducts] = useState([]);
   const [favoriteRecipes, setFavoriteRecipes] = useState([]);
   const [customRecipes, setCustomRecipes] = useState([]);
+  const [showRecipeLibrary, setShowRecipeLibrary] = useState(false);
+  const [recipeLibraryLoading, setRecipeLibraryLoading] = useState(false);
+  const [recipeLibraryQuery, setRecipeLibraryQuery] = useState('');
+  const [recipeLibrary, setRecipeLibrary] = useState([]);
+  const [libraryFavoriteIds, setLibraryFavoriteIds] = useState(new Set());
+  const [myLibraryFavorites, setMyLibraryFavorites] = useState([]);
   const [notification, setNotification] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -715,6 +798,13 @@ const OlivierApp = () => {
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState(''); // баркод, привязанный к текущей форме
+
+  const [showAddMealModal, setShowAddMealModal] = useState(false);
+  const [mealFormData, setMealFormData] = useState({
+    name: '',
+    category: 'Суп',
+    preparedDate: new Date().toISOString().split('T')[0]
+  });
 
   const [editFormData, setEditFormData] = useState({
     name: '',
@@ -776,6 +866,7 @@ const OlivierApp = () => {
     const applyLocalBundle = (local) => {
       if (!local) return;
       if (local.pantryItems) setPantryItems(local.pantryItems);
+      if (local.preparedMeals) setPreparedMeals(local.preparedMeals);
       if (local.shoppingItems) setShoppingItems(local.shoppingItems);
       if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
       if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
@@ -836,6 +927,7 @@ const OlivierApp = () => {
               const h = hydrateAppState(fsRow.state);
               if (h) {
                 setPantryItems(h.pantryItems);
+                setPreparedMeals(h.preparedMeals || []);
                 setShoppingItems(h.shoppingItems);
                 setFavoriteProducts(h.favoriteProducts);
                 setFavoriteRecipes(h.favoriteRecipes);
@@ -844,6 +936,7 @@ const OlivierApp = () => {
               lastFridgeRemoteAtRef.current = fsRow.updated_at;
             } else if (!localFridge) {
               setPantryItems(createDefaultPantryItems());
+              setPreparedMeals([]);
               setShoppingItems([]);
               setFavoriteProducts([]);
               setFavoriteRecipes([]);
@@ -851,6 +944,7 @@ const OlivierApp = () => {
             }
           } else if (!localFridge) {
             setPantryItems(createDefaultPantryItems());
+            setPreparedMeals([]);
             setShoppingItems([]);
             setFavoriteProducts([]);
             setFavoriteRecipes([]);
@@ -887,6 +981,15 @@ const OlivierApp = () => {
             if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
             if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
             if (state.customRecipes) setCustomRecipes(state.customRecipes);
+            if (state.preparedMeals) {
+              setPreparedMeals(
+                state.preparedMeals.map((meal) => ({
+                  ...meal,
+                  preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+                  expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
+                }))
+              );
+            }
           } else if (!local) {
             setPantryItems(createDefaultPantryItems());
           }
@@ -915,6 +1018,11 @@ const OlivierApp = () => {
           pantryItems: pantryItems.map((item) => ({
             ...item,
             expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
+          })),
+          preparedMeals: preparedMeals.map((meal) => ({
+            ...meal,
+            preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
+            expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
           })),
           shoppingItems,
           favoriteProducts,
@@ -965,7 +1073,8 @@ const OlivierApp = () => {
     shoppingItems,
     favoriteProducts,
     favoriteRecipes,
-    customRecipes
+    customRecipes,
+    preparedMeals
   ]);
 
   // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
@@ -999,6 +1108,7 @@ const OlivierApp = () => {
         setFavoriteProducts(h.favoriteProducts);
         setFavoriteRecipes(h.favoriteRecipes);
         setCustomRecipes(h.customRecipes);
+        setPreparedMeals(h.preparedMeals || []);
       } catch (e) {
         console.error('fridge poll', e);
       }
@@ -1015,9 +1125,9 @@ const OlivierApp = () => {
     };
   }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
 
-  const showNotification = (message) => {
+  const showNotification = (message, durationMs = 1000) => {
     setNotification(message);
-    setTimeout(() => setNotification(''), 1000);
+    setTimeout(() => setNotification(''), durationMs);
   };
 
   const createSharedFridge = async () => {
@@ -1040,6 +1150,11 @@ const OlivierApp = () => {
         pantryItems: pantryItems.map((item) => ({
           ...item,
           expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
+        })),
+        preparedMeals: preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
+          expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
         })),
         shoppingItems,
         favoriteProducts,
@@ -1137,6 +1252,7 @@ const OlivierApp = () => {
         const h = hydrateAppState(fsRow.state);
         if (h) {
           setPantryItems(h.pantryItems);
+          setPreparedMeals(h.preparedMeals || []);
           setShoppingItems(h.shoppingItems);
           setFavoriteProducts(h.favoriteProducts);
           setFavoriteRecipes(h.favoriteRecipes);
@@ -1626,6 +1742,141 @@ const OlivierApp = () => {
     }
   };
 
+  const normalizeSearch = (s) => {
+    if (!s) return '';
+    try {
+      return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    } catch {
+      return String(s).toLowerCase().trim();
+    }
+  };
+
+  const openRecipeLibrary = () => {
+    setShowRecipeLibrary(true);
+  };
+
+  const closeRecipeLibrary = () => {
+    setShowRecipeLibrary(false);
+    setRecipeLibraryQuery('');
+  };
+
+  const loadRecipeLibrary = useCallback(async () => {
+    if (!supabase) {
+      showNotification('Supabase не подключён к этой сборке');
+      return;
+    }
+    setRecipeLibraryLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('recipes')
+        .select('id,name,tags,image,description,time,difficulty,ingredients,steps')
+        .order('name', { ascending: true });
+      if (error) {
+        console.error('recipes load', error);
+        showNotification('Не удалось загрузить библиотеку');
+        return;
+      }
+      setRecipeLibrary(Array.isArray(data) ? data : []);
+
+      if (telegramUserId) {
+        const { data: favRows } = await supabase
+          .from('user_favorites')
+          .select('recipe_id')
+          .eq('telegram_user_id', telegramUserId);
+        const s = new Set((favRows || []).map((r) => r.recipe_id));
+        setLibraryFavoriteIds(s);
+      } else {
+        setLibraryFavoriteIds(new Set());
+      }
+    } finally {
+      setRecipeLibraryLoading(false);
+    }
+  }, [telegramUserId]);
+
+  useEffect(() => {
+    if (!showRecipeLibrary) return;
+    loadRecipeLibrary();
+  }, [showRecipeLibrary, loadRecipeLibrary]);
+
+  const toggleLibraryFavorite = async (recipe) => {
+    if (!supabase || !telegramUserId) {
+      showNotification('Избранное доступно в Telegram при подключённом Supabase');
+      return;
+    }
+    const id = recipe?.id;
+    if (!id) return;
+
+    const has = libraryFavoriteIds.has(id);
+    try {
+      if (has) {
+        await supabase
+          .from('user_favorites')
+          .delete()
+          .eq('telegram_user_id', telegramUserId)
+          .eq('recipe_id', id);
+        setLibraryFavoriteIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        showNotification('Удалено из избранного');
+        loadMyLibraryFavorites();
+      } else {
+        await supabase
+          .from('user_favorites')
+          .upsert(
+            { telegram_user_id: telegramUserId, recipe_id: id },
+            { onConflict: 'telegram_user_id,recipe_id' }
+          );
+        setLibraryFavoriteIds((prev) => new Set(prev).add(id));
+        showNotification('Добавлено в избранное');
+        loadMyLibraryFavorites();
+      }
+    } catch (e) {
+      console.error('favorite toggle', e);
+      showNotification('Не удалось обновить избранное');
+    }
+  };
+
+  const loadMyLibraryFavorites = useCallback(async () => {
+    if (!supabase || !telegramUserId) {
+      setMyLibraryFavorites([]);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('recipe_id, recipes ( id, name, tags, image, description, time, difficulty, ingredients, steps )')
+        .eq('telegram_user_id', telegramUserId);
+      if (error) {
+        console.error('user_favorites load', error);
+        return;
+      }
+      const recipes = (data || [])
+        .map((row) => row.recipes)
+        .filter(Boolean)
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          tags: r.tags,
+          image: r.image || '',
+          description: r.description || '',
+          time: r.time || 0,
+          difficulty: r.difficulty || '',
+          ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+          steps: Array.isArray(r.steps) ? r.steps : []
+        }));
+      setMyLibraryFavorites(recipes);
+    } catch (e) {
+      console.error('loadMyLibraryFavorites', e);
+    }
+  }, [telegramUserId]);
+
+  useEffect(() => {
+    if (currentTab !== 'recipes') return;
+    loadMyLibraryFavorites();
+  }, [currentTab, loadMyLibraryFavorites]);
+
   // Функции для работы с рецептами
   const getAvailableRecipes = () => {
     return RECIPES_DB.filter(recipe => {
@@ -1962,6 +2213,121 @@ const OlivierApp = () => {
     }
   };
 
+  const getLocalDayKey = (d) => {
+    const date = d instanceof Date ? d : new Date(d);
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const notifiedExpiryRef = useRef(new Set());
+  const lastExpiryDayKeyRef = useRef(null);
+
+  // Ассистентские уведомления: сегодня вечером (после 17:00) для продуктов,
+  // срок годности которых заканчивается сегодня.
+  useEffect(() => {
+    const check = () => {
+      const now = new Date();
+      if (now.getHours() < 17) return;
+
+      const todayKey = getLocalDayKey(now);
+      if (lastExpiryDayKeyRef.current !== todayKey) {
+        lastExpiryDayKeyRef.current = todayKey;
+        notifiedExpiryRef.current = new Set();
+      }
+
+      const candidates = pantryItems
+        .map((item) => ({ item, expiry: item?.expiryDate ? new Date(item.expiryDate) : null }))
+        .filter(({ item, expiry }) => {
+          if (!item || !expiry) return false;
+          if (expiry <= now) return false;
+          return getLocalDayKey(expiry) === todayKey;
+        })
+        .sort((a, b) => a.expiry - b.expiry);
+
+      const chosen = candidates[0];
+      if (!chosen) return;
+
+      const notifyKey = `${chosen.item.id}_${todayKey}`;
+      if (notifiedExpiryRef.current.has(notifyKey)) return;
+
+      notifiedExpiryRef.current.add(notifyKey);
+      showNotification(
+        `Срок годности '${chosen.item.name}' истекает сегодня вечером. Не забудьте поужинать!`,
+        3500
+      );
+    };
+
+    check();
+    const id = setInterval(check, 60000);
+    return () => clearInterval(id);
+  }, [pantryItems]);
+
+  const toLocalDate = (dateStr) => {
+    // Дата из input type="date" приходит как YYYY-MM-DD.
+    // Добавляем "T00:00:00", чтобы парсинг не уезжал из-за таймзоны.
+    try {
+      return new Date(`${dateStr}T00:00:00`);
+    } catch {
+      return new Date();
+    }
+  };
+
+  const calcMealExpiresAt = (preparedDate, category) => {
+    const base = preparedDate instanceof Date ? preparedDate : new Date(preparedDate);
+    const days = MEAL_DEFAULT_DAYS_BY_CATEGORY[category] ?? 1;
+    return new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+  };
+
+  const formatHoursLeft = (expiresAt) => {
+    if (!expiresAt) return '';
+    const diffMs = expiresAt - new Date();
+    const diffHours = Math.ceil(diffMs / (1000 * 60 * 60));
+    if (diffHours >= 0) return `${diffHours} ч осталось`;
+    return `${Math.abs(diffHours)} ч просрочено`;
+  };
+
+  const handleAddPreparedMeal = () => {
+    const name = mealFormData.name.trim();
+    const category = mealFormData.category;
+    const preparedDateStr = mealFormData.preparedDate;
+
+    if (!name) {
+      showNotification('Введите название блюда');
+      return;
+    }
+    if (!category) {
+      showNotification('Выберите категорию');
+      return;
+    }
+    if (!preparedDateStr) {
+      showNotification('Выберите дату приготовления');
+      return;
+    }
+
+    const preparedDate = toLocalDate(preparedDateStr);
+    const expiresAt = calcMealExpiresAt(preparedDate, category);
+
+    const newMeal = {
+      id: Date.now(),
+      name,
+      category,
+      preparedDate,
+      expiresAt
+    };
+
+    setPreparedMeals((prev) => [newMeal, ...prev]);
+    showNotification('Готовое блюдо добавлено');
+
+    setShowAddMealModal(false);
+    setMealFormData({
+      name: '',
+      category: 'Суп',
+      preparedDate: new Date().toISOString().split('T')[0]
+    });
+  };
+
   // Функция добавления продукта в корзину из кладовой
   const addPantryItemToCart = (item) => {
     const existingItem = shoppingItems.find(shopItem => shopItem.name === item.name && !shopItem.completed);
@@ -2030,49 +2396,75 @@ const OlivierApp = () => {
           </div>
         </div>
       )}
-      {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 pr-14 flex flex-col items-center justify-center relative gap-0.5">
-        {currentTab === 'pantry' && (
-          <button
-            type="button"
-            onClick={() => setSortByExpiry(prev => !prev)}
-            className={`absolute left-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl transition-colors ${
-              sortByExpiry ? 'text-orange-500 bg-orange-50' : 'text-gray-400 hover:bg-gray-50'
-            }`}
-            title={sortByExpiry ? 'Сортировка по сроку: вкл.' : 'Сортировать по сроку годности'}
-            aria-label="Сортировать по сроку годности"
-          >
-            <Calendar size={22} />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowShareModal(true)}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl hover:bg-blue-50 ${
-            supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
-          }`}
-          title={
-            !telegramUserId
-              ? 'Семейный холодильник — откройте из Telegram'
-              : !supabase
-                ? 'Нужны переменные Supabase в сборке (Vercel)'
-                : 'Семейный холодильник'
-          }
-          aria-label="Поделиться кладовой"
-        >
-          <Share2 size={22} />
-        </button>
-        <h1 className="text-lg font-semibold capitalize">
-          {currentTab === 'pantry' && 'Кладовая'}
-          {currentTab === 'favorites' && 'Избранное'}
-          {currentTab === 'recipes' && 'Рецепты'}
-          {currentTab === 'shopping' && 'Покупки'}
-          {hasExpiredItems && currentTab === 'pantry' && (
-            <span className="ml-2 text-orange-500">!</span>
-          )}
-        </h1>
+      {/* Top Bar: иконки в одном ряду с заголовком, без absolute — ниже выреза/notch */}
+      <div
+        className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
+        style={{
+          /* В Telegram не суммируем env(safe-area) с contentSafeAreaInset — иначе огромный зазор под «Закрыть» */
+          paddingTop: tg
+            ? `${Math.max(telegramHeaderPadPx + 25, 10)}px`
+            : 'max(1rem, calc(env(safe-area-inset-top, 0px) + 0.75rem))'
+        }}
+      >
+        <div className="flex items-center gap-1 min-h-[48px]">
+          <div className="shrink-0 w-12 flex items-center justify-center">
+            {currentTab === 'pantry' && pantrySubTab === 'products' ? (
+              <button
+                type="button"
+                onClick={() => setSortByExpiry(prev => !prev)}
+                className={`p-2 rounded-xl transition-colors ${
+                  sortByExpiry ? 'text-orange-500 bg-orange-50' : 'text-gray-400 hover:bg-gray-50'
+                }`}
+                title={sortByExpiry ? 'Сортировка по сроку: вкл.' : 'Сортировать по сроку годности'}
+                aria-label="Сортировать по сроку годности"
+              >
+                <Calendar size={22} />
+              </button>
+            ) : currentTab === 'recipes' ? (
+              <button
+                type="button"
+                onClick={openRecipeLibrary}
+                className="p-2 rounded-xl transition-colors text-gray-400 hover:bg-gray-50 hover:text-gray-700"
+                title="Библиотека рецептов"
+                aria-label="Открыть библиотеку рецептов"
+              >
+                <BookOpen size={22} />
+              </button>
+            ) : null}
+          </div>
+          <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1">
+            {currentTab === 'pantry' && 'Кладовая'}
+            {currentTab === 'favorites' && 'Избранное'}
+            {currentTab === 'recipes' && 'Рецепты'}
+            {currentTab === 'shopping' && 'Покупки'}
+            {hasExpiredItems && currentTab === 'pantry' && (
+              <span className="ml-2 text-orange-500">!</span>
+            )}
+          </h1>
+          <div className="shrink-0 w-12 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setShowShareModal(true)}
+              className={`p-2 rounded-xl hover:bg-blue-50 ${
+                supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
+              }`}
+              title={
+                !telegramUserId
+                  ? 'Семейный холодильник — откройте из Telegram'
+                  : !supabase
+                    ? 'Нужны переменные Supabase в сборке (Vercel)'
+                    : 'Семейный холодильник'
+              }
+              aria-label="Поделиться кладовой"
+            >
+              <Share2 size={22} />
+            </button>
+          </div>
+        </div>
         {sharedFridgeId && (
-          <span className="text-xs text-blue-600 font-medium">Общая кладовая</span>
+          <span className="text-xs text-blue-600 font-medium text-center block">
+            Общая кладовая
+          </span>
         )}
       </div>
 
@@ -2180,13 +2572,34 @@ const OlivierApp = () => {
       )}
 
   {/* Content */}
-  <div className="p-4 pb-28" ref={contentRef}>
+  <div className="px-4 pt-2 pb-28" ref={contentRef}>
         {/* Main Content */}
         <div className="space-y-4">
           {currentTab === 'pantry' && (
             <div>
-              
-              {pantryItems.length === 0 ? (
+
+              <div className="flex gap-2 bg-white rounded-xl p-1 shadow-sm mb-4">
+                <button
+                  type="button"
+                  onClick={() => setPantrySubTab('products')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    pantrySubTab === 'products' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  Продукты
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPantrySubTab('meals')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    pantrySubTab === 'meals' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  Готовые блюда
+                </button>
+              </div>
+
+              {pantrySubTab === 'products' && (pantryItems.length === 0 ? (
                 <div className="text-center text-gray-500 py-8">
                   Кладовая пуста. Добавьте продукты!
                 </div>
@@ -2327,7 +2740,54 @@ const OlivierApp = () => {
                     ))}
                   </div>
                 );
-              })()}
+              })())}
+            </div>
+          )}
+
+          {currentTab === 'pantry' && pantrySubTab === 'meals' && (
+            <div className="space-y-3">
+              {preparedMeals.length === 0 ? (
+                <div className="text-center text-gray-500 py-8">
+                  Пока нет готовых блюд. Добавьте первое!
+                </div>
+              ) : (
+                [...preparedMeals]
+                  .sort((a, b) => a.expiresAt - b.expiresAt)
+                  .map((meal) => (
+                    <div
+                      key={meal.id}
+                      className="bg-orange-50 border border-orange-100 rounded-xl p-4 shadow-sm"
+                    >
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-gray-900 text-left">
+                            {meal.name}
+                          </div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            {meal.category}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Приготовлено: {meal.preparedDate ? meal.preparedDate.toLocaleDateString('ru-RU') : '—'}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Истекает: {meal.expiresAt ? meal.expiresAt.toLocaleDateString('ru-RU') : '—'}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div
+                            className={`text-xs font-semibold px-2 py-1 rounded-lg ${
+                              meal.expiresAt && meal.expiresAt < new Date()
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-yellow-100 text-yellow-700'
+                            }`}
+                          >
+                            {formatHoursLeft(meal.expiresAt)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+              )}
             </div>
           )}
 
@@ -2336,48 +2796,50 @@ const OlivierApp = () => {
               
               {/* Панель управления */}
               {shoppingItems.length > 0 && (
-                <div className="flex flex-wrap items-stretch gap-3 bg-white rounded-xl p-4 shadow-sm mb-6">
+                <div className="flex flex-nowrap items-stretch gap-2 bg-white rounded-xl p-3 shadow-sm mb-6">
                   <button
+                    type="button"
                     onClick={() => {
                       if (window.confirm('Удалить все товары из списка покупок?')) {
                         setShoppingItems([]);
                         showNotification('Список покупок очищен');
                       }
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-red-500 text-white px-4 py-3 rounded-lg hover:bg-red-600 transition-colors"
+                    className="flex-1 min-w-0 flex items-center justify-center gap-1.5 bg-red-500 text-white px-2 py-2.5 rounded-lg hover:bg-red-600 transition-colors text-sm font-semibold"
                   >
-                    <Trash2 size={16} />
-                    Удалить всё
+                    <Trash2 size={15} className="shrink-0" />
+                    <span className="truncate">Удалить всё</span>
                   </button>
                   <button
+                    type="button"
                     onClick={moveCompletedItemsToPantry}
                     disabled={!shoppingItems.some(item => item.completed)}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-semibold transition-colors ${
+                    className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                       shoppingItems.some(item => item.completed)
                         ? 'bg-green-500 text-white hover:bg-green-600 shadow-md'
                         : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                     }`}
                   >
-                    <Check size={18} />
-                    Перенести в кладовую
+                    <Check size={16} className="shrink-0" />
+                    <span className="truncate">В кладовую</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => {
                       const textList = `Закупись:\n${Object.entries(groupItemsByCategory(shoppingItems))
                         .map(([category, items]) => {
-                          const categoryItems = items.map(item => 
-                            `${item.completed ? '✓' : '•'} ${item.name} (${item.quantity} ${item.measure})${item.note ? ` - ${item.note}` : ''}`
-                          ).join('\n');
+                          const categoryItems = items.map((item) => formatShoppingExportLine(item)).join('\n');
                           return `${category}:\n${categoryItems}`;
                         }).join('\n\n')}`;
                       navigator.clipboard.writeText(textList).then(() => {
                         showNotification('Список скопирован в буфер обмена');
                       });
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition-colors"
+                    className="shrink-0 w-11 h-11 self-center flex items-center justify-center rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm"
+                    title="Экспорт: скопировать список"
+                    aria-label="Экспорт списка в буфер обмена"
                   >
-                    <FileText size={16} />
-                    Экспорт
+                    <Upload size={18} strokeWidth={2.25} />
                   </button>
                 </div>
               )}
@@ -2643,6 +3105,21 @@ const OlivierApp = () => {
                   </button>
                 </div>
                 <div className="space-y-4">
+                  {myLibraryFavorites.map((recipe) => (
+                    <RecipeCard
+                      key={`fav-${recipe.id}`}
+                      recipe={recipe}
+                      pantryItems={pantryItems}
+                      isCustom={false}
+                      onAddToCart={addRecipeToCart}
+                      onToggleFavorite={toggleLibraryFavorite}
+                      onViewDetails={(r) => {
+                        setSelectedRecipe(r);
+                        setShowRecipeModal(true);
+                      }}
+                      isFavorite={true}
+                    />
+                  ))}
                   {customRecipes.map(recipe => (
                     <RecipeCard 
                       key={recipe.id} 
@@ -2671,18 +3148,27 @@ const OlivierApp = () => {
       {(currentTab === 'pantry' || currentTab === 'shopping' || currentTab === 'favorites') && (
         <>
           <button
-            onClick={() => setShowBarcodeScanner(true)}
-            className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
-            title="Сканировать штрихкод"
-          >
-            <ScanLine size={24} />
-          </button>
-          <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              if (currentTab === 'pantry' && pantrySubTab === 'meals') {
+                setShowAddMealModal(true);
+              } else {
+                setShowAddModal(true);
+              }
+            }}
             className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
           >
             <Plus size={24} />
           </button>
+
+          {currentTab === 'pantry' && pantrySubTab === 'products' && (
+            <button
+              onClick={() => setShowBarcodeScanner(true)}
+              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
+              title="Сканировать штрихкод"
+            >
+              <ScanLine size={24} />
+            </button>
+          )}
         </>
       )}
 
@@ -2873,6 +3359,191 @@ const OlivierApp = () => {
         </div>
       )}
 
+      {/* Add Prepared Meal Modal */}
+      {showAddMealModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => {
+            setShowAddMealModal(false);
+            setMealFormData({
+              name: '',
+              category: 'Суп',
+              preparedDate: new Date().toISOString().split('T')[0]
+            });
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Добавить готовое блюдо</h2>
+              <button
+                onClick={() => {
+                  setShowAddMealModal(false);
+                  setMealFormData({
+                    name: '',
+                    category: 'Суп',
+                    preparedDate: new Date().toISOString().split('T')[0]
+                  });
+                }}
+                className="text-gray-500"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
+                <input
+                  type="text"
+                  value={mealFormData.name}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                  placeholder="Например Борщ"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
+                <select
+                  value={mealFormData.category}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  {MEAL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Дата приготовления</label>
+                <input
+                  type="date"
+                  value={mealFormData.preparedDate}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, preparedDate: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+              </div>
+
+              <button
+                onClick={handleAddPreparedMeal}
+                className="w-full bg-orange-500 text-white p-3 rounded-xl font-semibold"
+              >
+                Добавить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipe Library (Global) */}
+      {showRecipeLibrary && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[70] flex items-center justify-center p-4" onClick={closeRecipeLibrary}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BookOpen size={20} className="text-gray-700" />
+                <h2 className="text-lg font-bold">Библиотека рецептов</h2>
+              </div>
+              <button onClick={closeRecipeLibrary} className="text-gray-500">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <input
+                  type="text"
+                  value={recipeLibraryQuery}
+                  onChange={(e) => setRecipeLibraryQuery(e.target.value)}
+                  placeholder="Поиск по названию и тегам…"
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  Ищем по названию и тегам во всей базе Supabase
+                </div>
+              </div>
+
+              {recipeLibraryLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="bg-gray-100 rounded-xl p-4 animate-pulse">
+                      <div className="h-4 bg-gray-200 rounded w-2/3 mb-2" />
+                      <div className="h-3 bg-gray-200 rounded w-1/3" />
+                    </div>
+                  ))}
+                </div>
+              ) : (() => {
+                const q = normalizeSearch(recipeLibraryQuery);
+                const filtered = recipeLibrary.filter((r) => {
+                  if (!q) return true;
+                  const name = normalizeSearch(r?.name || '');
+                  const tags = Array.isArray(r?.tags) ? normalizeSearch(r.tags.join(' ')) : normalizeSearch(r?.tags || '');
+                  return name.includes(q) || tags.includes(q);
+                });
+
+                if (filtered.length === 0) {
+                  return <div className="text-center text-gray-500 py-8">Ничего не найдено</div>;
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {filtered.map((r) => {
+                      const isFav = libraryFavoriteIds.has(r.id);
+                      return (
+                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <button
+                              className="flex-1 text-left"
+                              onClick={() => {
+                                // Приводим к формату Recipe Modal
+                                const normalized = {
+                                  id: r.id,
+                                  name: r.name,
+                                  description: r.description || '',
+                                  time: r.time || 0,
+                                  difficulty: r.difficulty || '',
+                                  image: r.image || '',
+                                  ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients?.ingredients || []),
+                                  steps: Array.isArray(r.steps) ? r.steps : (r.steps?.steps || [])
+                                };
+                                closeRecipeLibrary();
+                                setSelectedRecipe(normalized);
+                                setShowRecipeModal(true);
+                              }}
+                            >
+                              <div className="font-semibold text-gray-900">{r.name}</div>
+                              {Array.isArray(r.tags) && r.tags.length > 0 && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {r.tags.slice(0, 6).join(' • ')}
+                                </div>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleLibraryFavorite(r)}
+                              className={`p-2 rounded-xl transition-colors ${isFav ? 'text-red-500 bg-red-50' : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'}`}
+                              title={isFav ? 'Убрать из избранного' : 'В избранное'}
+                            >
+                              <Heart size={18} fill={isFav ? 'currentColor' : 'none'} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Modal */}
       {showEditModal && editingItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowEditModal(false)}>
@@ -3020,16 +3691,47 @@ const OlivierApp = () => {
 
       {/* Recipe Modal */}
       {showRecipeModal && selectedRecipe && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowRecipeModal(false)}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[80]" onClick={() => setShowRecipeModal(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">{selectedRecipe.name}</h2>
-              <button
-                onClick={() => setShowRecipeModal(false)}
-                className="text-gray-500"
-              >
-                <X size={24} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Если рецепт из Supabase (uuid строкой) — пишем в user_favorites
+                    if (typeof selectedRecipe.id === 'string') {
+                      toggleLibraryFavorite(selectedRecipe);
+                      return;
+                    }
+                    // иначе — локальное избранное
+                    toggleFavoriteRecipe(selectedRecipe);
+                  }}
+                  className={`p-2 rounded-xl transition-colors ${
+                    (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
+                    favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                      ? 'text-red-500 bg-red-50'
+                      : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'
+                  }`}
+                  title="В избранное"
+                >
+                  <Heart
+                    size={20}
+                    fill={
+                      (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
+                      favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                        ? 'currentColor'
+                        : 'none'
+                    }
+                  />
+                </button>
+                <button
+                  onClick={() => setShowRecipeModal(false)}
+                  className="text-gray-500"
+                >
+                  <X size={24} />
+                </button>
+              </div>
             </div>
             
             <img 
