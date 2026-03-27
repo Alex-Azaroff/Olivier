@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2 } from 'lucide-react';
+import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2, ScanLine, Loader2 } from 'lucide-react';
 import { supabase } from './src/supabaseClient';
 import { RECIPES_DB } from './src/data/recipes';
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
@@ -617,6 +617,7 @@ const OlivierApp = () => {
     expiryDate: '',
     autoFilled: false
   });
+  const [barcodeLookupLoading, setBarcodeLookupLoading] = useState(false);
 
   const [editFormData, setEditFormData] = useState({
     name: '',
@@ -634,6 +635,7 @@ const OlivierApp = () => {
     comments: '',
     image: ''
   });
+
 
   const createDefaultPantryItems = () => {
     const now = Date.now();
@@ -1147,6 +1149,119 @@ const OlivierApp = () => {
       measure: product.measure,
       autoFilled: true
     }));
+  };
+
+  const parseOFFQuantity = (qStr) => {
+    if (!qStr) return { quantity: 1, measure: 'шт.' };
+    const s = String(qStr).toLowerCase().trim();
+    let measure = 'шт.';
+    if (/кг|kg/.test(s)) measure = 'кг.';
+    else if (/мл|ml/.test(s)) measure = 'мл.';
+    else if (/\d\s*г\b|\d\s*g\b/.test(s)) measure = 'г.';
+    else if (/\bл\b|\bl\b/.test(s)) measure = 'л.';
+    const numMatch = s.match(/(\d+[.,]?\d*)/);
+    const quantity = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : 1;
+    return { quantity: isFinite(quantity) && quantity > 0 ? quantity : 1, measure };
+  };
+
+  const mapOFFCategory = (tags) => {
+    if (!Array.isArray(tags)) return '🏷️ Прочее';
+    const t = tags.join(' ').toLowerCase();
+    if (/milk|dairy|lait/.test(t)) return '🥛 Молочные';
+    if (/yogurt|kefir|ferment/.test(t)) return '🥛 Кисломолочные';
+    if (/cheese/.test(t)) return '🧀 Сыры твердые';
+    if (/butter|margarine/.test(t)) return '🧈 Масло';
+    if (/egg/.test(t)) return '🥚 Яйца';
+    if (/meat|beef|pork|chicken/.test(t)) return '🥩 Мясо';
+    if (/fish|seafood/.test(t)) return '🐟 Рыба свежая';
+    if (/vegetable|овощ/.test(t)) return '🥦 Овощи';
+    if (/fruit|фрукт/.test(t)) return '🍎 Фрукты';
+    if (/bread|выпечка/.test(t)) return '🍞 Хлеб';
+    if (/pasta|макарон/.test(t)) return '🍝 Макароны';
+    if (/cereal|grain|крупа/.test(t)) return '🌾 Крупы';
+    if (/sauce|кетчуп|соус/.test(t)) return '🍯 Соусы';
+    if (/coffee|кофе/.test(t)) return '☕ Кофе';
+    if (/tea|чай/.test(t)) return '☕ Чай';
+    return '🏷️ Прочее';
+  };
+
+  const processBarcodeToShopping = async (codeRaw) => {
+    const code = String(codeRaw || '').trim();
+    if (!code) return;
+
+    // 1) Пробуем локальный каталог
+    const fromLocal = PRODUCTS_DB.find((p) => String(p?.barcode || '').trim() === code);
+    if (fromLocal) {
+      addToShopping(fromLocal, 1);
+      setShowAddModal(false);
+      return;
+    }
+
+    // 2) Open Food Facts
+    try {
+      const res = await fetch(
+        `https://world.openfoodfacts.org/api/v2/product/${code}` +
+        `?fields=product_name,product_name_ru,brands,quantity,categories_tags`
+      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json.status === 1 && json.product) {
+          const p = json.product;
+          const name = (p.product_name_ru || p.product_name || '').trim();
+          const { quantity, measure } = parseOFFQuantity(p.quantity);
+          if (name) {
+            addToShopping({
+              name,
+              category: mapOFFCategory(p.categories_tags),
+              measure,
+              shelfLife: 7
+            }, quantity);
+            setShowAddModal(false);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      // ignore and fallthrough
+    }
+
+    showNotification('Штрихкод не найден. Добавьте товар вручную.');
+  };
+
+  const handleBarcodeScanToShopping = () => {
+    if (barcodeLookupLoading) return;
+    const tgWebApp = window.Telegram?.WebApp;
+    setBarcodeLookupLoading(true);
+
+    const done = () => setBarcodeLookupLoading(false);
+
+    if (tgWebApp?.showScanQrPopup) {
+      try {
+        tgWebApp.showScanQrPopup(
+          { text: 'Наведите камеру на штрихкод' },
+          (text) => {
+            tgWebApp.closeScanQrPopup?.();
+            if (!text) {
+              done();
+              return;
+            }
+            processBarcodeToShopping(text).finally(done);
+            return true;
+          }
+        );
+      } catch {
+        done();
+        showNotification('Не удалось открыть сканер');
+      }
+      return;
+    }
+
+    const manual = window.prompt('Введите штрихкод');
+    if (!manual) {
+      done();
+      return;
+    }
+    processBarcodeToShopping(manual).finally(done);
   };
 
   const addToPantry = (product, quantity = 1, expiryDate = null) => {
@@ -1686,18 +1801,24 @@ const OlivierApp = () => {
         </div>
       )}
       {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 flex flex-col items-center justify-center relative gap-0.5">
-        {supabase && telegramUserId && (
-          <button
-            type="button"
-            onClick={() => setShowShareModal(true)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl text-blue-500 hover:bg-blue-50"
-            title="Семейный холодильник"
-            aria-label="Поделиться кладовой"
-          >
-            <Share2 size={22} />
-          </button>
-        )}
+      <div className="bg-white shadow-sm p-4 pr-14 flex flex-col items-center justify-center relative gap-0.5">
+        <button
+          type="button"
+          onClick={() => setShowShareModal(true)}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl hover:bg-blue-50 ${
+            supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
+          }`}
+          title={
+            !telegramUserId
+              ? 'Семейный холодильник — откройте из Telegram'
+              : !supabase
+                ? 'Нужны переменные Supabase в сборке (Vercel)'
+                : 'Семейный холодильник'
+          }
+          aria-label="Поделиться кладовой"
+        >
+          <Share2 size={22} />
+        </button>
         <h1 className="text-lg font-semibold capitalize">
           {currentTab === 'pantry' && 'Кладовая'}
           {currentTab === 'favorites' && 'Избранное'}
@@ -1730,7 +1851,23 @@ const OlivierApp = () => {
               Одна кладовая, покупки, избранное и свои рецепты для всех, кто вошёл по коду. Изменения подтягиваются с сервера каждые ~20 секунд и при возврате в приложение.
             </p>
             {!supabase || !telegramUserId ? (
-              <p className="text-sm text-orange-600">Войдите через Telegram и настройте Supabase, чтобы пользоваться общей кладовой.</p>
+              <div className="space-y-3 text-sm text-orange-700 bg-orange-50 rounded-xl p-4">
+                {!telegramUserId && (
+                  <p>
+                    <span className="font-semibold">Откройте приложение из Telegram</span> (кнопка / меню бота → Mini App). В обычном браузере Telegram не передаёт ваш аккаунт, поэтому общая кладовая недоступна.
+                  </p>
+                )}
+                {telegramUserId && !supabase && (
+                  <p>
+                    <span className="font-semibold">Supabase не подключён к этой сборке.</span> В Vercel → Project → Settings → Environment Variables для <strong>Production</strong> задайте{' '}
+                    <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_URL</code> и{' '}
+                    <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_ANON_KEY</code>, затем сделайте redeploy.
+                  </p>
+                )}
+                {!telegramUserId && supabase && (
+                  <p className="text-gray-600">После открытия из Telegram кнопка станет синей — можно создавать код или вводить код семьи.</p>
+                )}
+              </div>
             ) : sharedFridgeId ? (
               <div className="space-y-4">
                 <div>
@@ -2318,7 +2455,7 @@ const OlivierApp = () => {
       {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto overflow-x-hidden">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">
                 {currentTab === 'pantry' && 'Добавить в кладовую'}
@@ -2326,15 +2463,28 @@ const OlivierApp = () => {
                 {currentTab === 'favorites' && 'Добавить в избранное'}
                 {currentTab === 'recipes' && 'Добавить рецепт'}
               </h2>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-gray-500"
-              >
-                <X size={24} />
-              </button>
+              <div className="flex items-center gap-2">
+                {currentTab === 'shopping' && (
+                  <button
+                    type="button"
+                    onClick={handleBarcodeScanToShopping}
+                    disabled={barcodeLookupLoading}
+                    className="text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
+                    title="Добавить в покупки по штрихкоду"
+                  >
+                    {barcodeLookupLoading ? <Loader2 size={20} className="animate-spin" /> : <ScanLine size={20} />}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="text-gray-500"
+                >
+                  <X size={24} />
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Название продукта
@@ -2418,7 +2568,7 @@ const OlivierApp = () => {
                       type="date"
                       value={addFormData.expiryDate}
                       onChange={(e) => setAddFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className={`w-full p-3 border border-gray-200 rounded-xl ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
+                      className={`block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
                     />
                   </div>
                   {addFormData.autoFilled && !addFormData.expiryDate && (
@@ -2443,7 +2593,7 @@ const OlivierApp = () => {
       {/* Edit Modal */}
       {showEditModal && editingItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md overflow-x-hidden">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Редактировать продукт</h2>
               <button
@@ -2454,7 +2604,7 @@ const OlivierApp = () => {
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
                 <input
@@ -2522,7 +2672,7 @@ const OlivierApp = () => {
                       type="date"
                       value={editFormData.expiryDate}
                       onChange={(e) => setEditFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className="w-full p-3 border border-gray-200 rounded-xl"
+                      className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none"
                     />
                   </div>
                 </div>
@@ -2998,7 +3148,7 @@ const OlivierApp = () => {
                     updateExpiryDate(e.target.value);
                   }
                 }}
-                className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none focus:border-blue-500 focus:outline-none"
                 autoFocus
               />
             </div>
