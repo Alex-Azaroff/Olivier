@@ -3167,7 +3167,7 @@ const OlivierApp = () => {
                               );
                               setShoppingItems(updatedItems);
                             }}
-                            className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
+                            className={`w-6 h-6 min-w-6 min-h-6 shrink-0 aspect-square rounded-full border-2 p-0 appearance-none flex items-center justify-center transition-all duration-200 ${
                               item.completed 
                                 ? 'bg-green-500 border-green-500 text-white shadow-md' 
                                 : 'border-gray-300 hover:border-green-400 bg-white'
