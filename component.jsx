@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2, ScanLine, Loader2 } from 'lucide-react';
+import { Heart, Home, Book, BookOpen, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, Share2, ScanLine, Loader2, Upload } from 'lucide-react';
+import { BrowserMultiFormatReader } from '@zxing/browser';
+import { NotFoundException } from '@zxing/library';
 import { supabase } from './src/supabaseClient';
 import { RECIPES_DB } from './src/data/recipes';
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
+import { MEAL_CATEGORIES, MEAL_DEFAULT_DAYS_BY_CATEGORY } from './src/data/meals';
 
 // Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
 // 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
@@ -113,12 +116,105 @@ const adjustQuantity = (currentQuantity, measure, increment) => {
   }
 };
 
+// Порция по умолчанию для единицы измерения (если у продукта нет явного поля portion)
+const getDefaultPortion = (measure) => {
+  const m = normalizeMeasure(measure);
+  if (m === 'шт.')     return 1;
+  if (m === 'г.')      return 50;
+  if (m === 'кг.')     return 0.1;
+  if (m === 'мл.')     return 200;
+  if (m === 'л.')      return 0.2;
+  if (m === 'мг.')     return 1000;
+  if (m === 'ч.л.')    return 1;
+  if (m === 'ст.л.')   return 1;
+  if (m === 'стакан.') return 1;
+  return 1;
+};
+
 
 // Компонент для поля с автозаполнением
+/**
+ * Модальный оверлей со сканером штрихкодов (ZXing, поддерживает EAN-13/UPC/QR).
+ * @param {{ onDetected: (code: string) => void, onClose: () => void }} props
+ */
+const BarcodeScannerModal = ({ onDetected, onClose }) => {
+  const videoRef = useRef(null);
+  const readerRef = useRef(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const reader = new BrowserMultiFormatReader();
+    readerRef.current = reader;
+    let stopped = false;
+
+    reader.decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      videoRef.current,
+      (result, err) => {
+        if (stopped) return;
+        if (result) {
+          stopped = true;
+          try { reader.reset(); } catch {}
+          onDetected(result.getText());
+        } else if (err && !(err instanceof NotFoundException)) {
+          setError('Нет доступа к камере. Разрешите доступ и попробуйте снова.');
+        }
+      }
+    ).catch(() => {
+      setError('Нет доступа к камере. Разрешите доступ и попробуйте снова.');
+    });
+
+    return () => {
+      stopped = true;
+      try { reader.reset(); } catch {}
+    };
+  }, [onDetected]);
+
+  return (
+    <div className="fixed inset-0 bg-black flex flex-col z-[80]">
+      {/* Заголовок */}
+      <div className="flex items-center justify-between px-4 py-3 bg-black bg-opacity-70">
+        <span className="text-white font-semibold text-sm">Наведите камеру на штрихкод</span>
+        <button onClick={onClose} className="text-white p-1">
+          <X size={24} />
+        </button>
+      </div>
+
+      {/* Видео */}
+      <div className="relative flex-1 flex items-center justify-center overflow-hidden">
+        <video ref={videoRef} className="w-full h-full object-cover" />
+        {/* Прицел */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-64 h-40 border-2 border-white rounded-xl opacity-80" />
+        </div>
+      </div>
+
+      {/* Ошибка */}
+      {error && (
+        <div className="px-4 py-3 bg-red-600 text-white text-sm text-center">{error}</div>
+      )}
+      <div className="px-4 py-3 bg-black bg-opacity-70 text-center">
+        <span className="text-gray-300 text-xs">EAN-13 · UPC · QR</span>
+      </div>
+    </div>
+  );
+};
+
 const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const containerRef = useRef(null);
   const safeProducts = Array.isArray(products) ? products : [];
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const normalizeForSearch = (s) => {
     if (!s && s !== 0) return '';
     try {
@@ -172,7 +268,7 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <input
         type="text"
         placeholder={placeholder}
@@ -183,7 +279,7 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
       />
       
       {showSuggestions && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 max-h-[220px] overflow-y-auto">
           {suggestions.map(product => (
             <button
               key={product.name}
@@ -485,6 +581,17 @@ const INVITE_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const generateInviteCode = () =>
   Array.from({ length: 6 }, () => INVITE_CODE_CHARS[Math.floor(Math.random() * INVITE_CODE_CHARS.length)]).join('');
 
+/** Зачёркивание в plain text (как визуально в списке) — комбинирующий штрих после каждого символа */
+const U_COMBINING_LONG_STRIKE = '\u0336';
+const plainTextStrikethrough = (s) =>
+  [...String(s)].map((ch) => (ch === '\n' || ch === '\r' ? ch : ch + U_COMBINING_LONG_STRIKE)).join('');
+
+const formatShoppingExportLine = (item) => {
+  const body = `${item.name} (${item.quantity} ${item.measure})${item.note ? ` - ${item.note}` : ''}`;
+  const text = item.completed ? plainTextStrikethrough(body) : body;
+  return `${item.completed ? '✓' : '•'} ${text}`;
+};
+
 const hydrateAppState = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   return {
@@ -492,9 +599,15 @@ const hydrateAppState = (raw) => {
       ...item,
       expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
     })),
+    preparedMeals: (raw.preparedMeals || []).map((meal) => ({
+      ...meal,
+      preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+      expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
+    })),
     shoppingItems: raw.shoppingItems || [],
     favoriteProducts: raw.favoriteProducts || [],
     favoriteRecipes: raw.favoriteRecipes || [],
+    favoriteMeals: raw.favoriteMeals || [],
     customRecipes: raw.customRecipes || []
   };
 };
@@ -502,6 +615,50 @@ const hydrateAppState = (raw) => {
 const OlivierApp = () => {
   const tg = window.Telegram?.WebApp;
   const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
+
+  /** В Telegram — отступ от верха WebView (contentSafeArea / запас); до mount эффекта не оставлять 10px */
+  const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
+    typeof window !== 'undefined' && window.Telegram?.WebApp ? 46 : 0
+  );
+
+  useEffect(() => {
+    const w = window.Telegram?.WebApp;
+    const sync = () => {
+      if (!w) {
+        setTelegramHeaderPadPx(0);
+        return;
+      }
+      const c = Number(w.contentSafeAreaInset?.top);
+      const s = Number(w.safeAreaInset?.top);
+      const fromApi = Math.max(
+        Number.isFinite(c) ? c : 0,
+        Number.isFinite(s) ? s : 0
+      );
+      if (fromApi > 0) {
+        setTelegramHeaderPadPx(Math.ceil(fromApi) + 6);
+        return;
+      }
+      setTelegramHeaderPadPx(46);
+    };
+    sync();
+    if (!w) return undefined;
+    w.onEvent?.('viewportChanged', sync);
+    try {
+      w.onEvent?.('safeAreaChanged', sync);
+      w.onEvent?.('contentSafeAreaChanged', sync);
+    } catch (_) {
+      /* старые клиенты */
+    }
+    return () => {
+      w.offEvent?.('viewportChanged', sync);
+      try {
+        w.offEvent?.('safeAreaChanged', sync);
+        w.offEvent?.('contentSafeAreaChanged', sync);
+      } catch (_) {
+        /* */
+      }
+    };
+  }, []);
 
   const getLocalKey = (userId, fridgeId = null) =>
     fridgeId ? `olivier_state_${userId || 'anon'}_fridge_${fridgeId}` : `olivier_state_${userId || 'anon'}`;
@@ -517,6 +674,13 @@ const OlivierApp = () => {
         parsed.pantryItems = parsed.pantryItems.map((item) => ({
           ...item,
           expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+        }));
+      }
+      if (parsed.preparedMeals) {
+        parsed.preparedMeals = parsed.preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+          expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
         }));
       }
       return parsed;
@@ -536,6 +700,13 @@ const OlivierApp = () => {
           expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString() : null
         }));
       }
+      if (toSave.preparedMeals) {
+        toSave.preparedMeals = toSave.preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? new Date(meal.preparedDate).toISOString() : null,
+          expiresAt: meal.expiresAt ? new Date(meal.expiresAt).toISOString() : null
+        }));
+      }
       localStorage.setItem(key, JSON.stringify(toSave));
     } catch (e) {
       console.error('Error saving local state', e);
@@ -543,10 +714,12 @@ const OlivierApp = () => {
   };
 
   const [currentTab, setCurrentTab] = useState('pantry');
+  const [pantrySubTab, setPantrySubTab] = useState('products'); // 'products' | 'meals'
   const contentRef = useRef(null);
   const [isLoadingState, setIsLoadingState] = useState(true);
   const [stateError, setStateError] = useState(null);
   const [pantryItems, setPantryItems] = useState([]);
+  const [preparedMeals, setPreparedMeals] = useState([]);
   const [shoppingItems, setShoppingItems] = useState([
     {
       id: 1,
@@ -587,7 +760,14 @@ const OlivierApp = () => {
   ]);
   const [favoriteProducts, setFavoriteProducts] = useState([]);
   const [favoriteRecipes, setFavoriteRecipes] = useState([]);
+  const [favoriteMeals, setFavoriteMeals] = useState([]);
   const [customRecipes, setCustomRecipes] = useState([]);
+  const [showRecipeLibrary, setShowRecipeLibrary] = useState(false);
+  const [recipeLibraryLoading, setRecipeLibraryLoading] = useState(false);
+  const [recipeLibraryQuery, setRecipeLibraryQuery] = useState('');
+  const [recipeLibrary, setRecipeLibrary] = useState([]);
+  const [libraryFavoriteIds, setLibraryFavoriteIds] = useState(new Set());
+  const [myLibraryFavorites, setMyLibraryFavorites] = useState([]);
   const [notification, setNotification] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -617,12 +797,22 @@ const OlivierApp = () => {
     expiryDate: '',
     autoFilled: false
   });
-  const [barcodeLookupLoading, setBarcodeLookupLoading] = useState(false);
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState(''); // баркод, привязанный к текущей форме
+
+  const [showAddMealModal, setShowAddMealModal] = useState(false);
+  const [mealFormData, setMealFormData] = useState({
+    name: '',
+    category: 'Суп',
+    preparedDate: new Date().toISOString().split('T')[0]
+  });
 
   const [editFormData, setEditFormData] = useState({
     name: '',
     quantity: 1,
     measure: '',
+    category: '',
     expiryDate: ''
   });
 
@@ -635,7 +825,6 @@ const OlivierApp = () => {
     comments: '',
     image: ''
   });
-
 
   const createDefaultPantryItems = () => {
     const now = Date.now();
@@ -679,9 +868,11 @@ const OlivierApp = () => {
     const applyLocalBundle = (local) => {
       if (!local) return;
       if (local.pantryItems) setPantryItems(local.pantryItems);
+      if (local.preparedMeals) setPreparedMeals(local.preparedMeals);
       if (local.shoppingItems) setShoppingItems(local.shoppingItems);
       if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
       if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+      if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
       if (local.customRecipes) setCustomRecipes(local.customRecipes);
     };
 
@@ -739,14 +930,19 @@ const OlivierApp = () => {
               const h = hydrateAppState(fsRow.state);
               if (h) {
                 setPantryItems(h.pantryItems);
+                setPreparedMeals(h.preparedMeals || []);
                 setShoppingItems(h.shoppingItems);
                 setFavoriteProducts(h.favoriteProducts);
                 setFavoriteRecipes(h.favoriteRecipes);
+          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+                if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
                 setCustomRecipes(h.customRecipes);
               }
               lastFridgeRemoteAtRef.current = fsRow.updated_at;
             } else if (!localFridge) {
               setPantryItems(createDefaultPantryItems());
+              setPreparedMeals([]);
               setShoppingItems([]);
               setFavoriteProducts([]);
               setFavoriteRecipes([]);
@@ -754,6 +950,7 @@ const OlivierApp = () => {
             }
           } else if (!localFridge) {
             setPantryItems(createDefaultPantryItems());
+            setPreparedMeals([]);
             setShoppingItems([]);
             setFavoriteProducts([]);
             setFavoriteRecipes([]);
@@ -789,7 +986,17 @@ const OlivierApp = () => {
             if (state.shoppingItems) setShoppingItems(state.shoppingItems);
             if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
             if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
+            if (state.favoriteMeals) setFavoriteMeals(state.favoriteMeals);
             if (state.customRecipes) setCustomRecipes(state.customRecipes);
+            if (state.preparedMeals) {
+              setPreparedMeals(
+                state.preparedMeals.map((meal) => ({
+                  ...meal,
+                  preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+                  expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
+                }))
+              );
+            }
           } else if (!local) {
             setPantryItems(createDefaultPantryItems());
           }
@@ -819,9 +1026,15 @@ const OlivierApp = () => {
             ...item,
             expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
           })),
+          preparedMeals: preparedMeals.map((meal) => ({
+            ...meal,
+            preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
+            expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
+          })),
           shoppingItems,
           favoriteProducts,
           favoriteRecipes,
+          favoriteMeals,
           customRecipes
         };
 
@@ -868,7 +1081,9 @@ const OlivierApp = () => {
     shoppingItems,
     favoriteProducts,
     favoriteRecipes,
-    customRecipes
+    favoriteMeals,
+    customRecipes,
+    preparedMeals
   ]);
 
   // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
@@ -901,7 +1116,9 @@ const OlivierApp = () => {
         setShoppingItems(h.shoppingItems);
         setFavoriteProducts(h.favoriteProducts);
         setFavoriteRecipes(h.favoriteRecipes);
+        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
         setCustomRecipes(h.customRecipes);
+        setPreparedMeals(h.preparedMeals || []);
       } catch (e) {
         console.error('fridge poll', e);
       }
@@ -918,9 +1135,9 @@ const OlivierApp = () => {
     };
   }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
 
-  const showNotification = (message) => {
+  const showNotification = (message, durationMs = 1000) => {
     setNotification(message);
-    setTimeout(() => setNotification(''), 1000);
+    setTimeout(() => setNotification(''), durationMs);
   };
 
   const createSharedFridge = async () => {
@@ -944,9 +1161,15 @@ const OlivierApp = () => {
           ...item,
           expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
         })),
+        preparedMeals: preparedMeals.map((meal) => ({
+          ...meal,
+          preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
+          expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
+        })),
         shoppingItems,
         favoriteProducts,
         favoriteRecipes,
+        favoriteMeals,
         customRecipes
       };
       let lastErr = null;
@@ -1040,9 +1263,12 @@ const OlivierApp = () => {
         const h = hydrateAppState(fsRow.state);
         if (h) {
           setPantryItems(h.pantryItems);
+          setPreparedMeals(h.preparedMeals || []);
           setShoppingItems(h.shoppingItems);
           setFavoriteProducts(h.favoriteProducts);
           setFavoriteRecipes(h.favoriteRecipes);
+          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
           setCustomRecipes(h.customRecipes);
         }
         lastFridgeRemoteAtRef.current = fsRow.updated_at;
@@ -1091,6 +1317,7 @@ const OlivierApp = () => {
         if (st.shoppingItems) setShoppingItems(st.shoppingItems);
         if (st.favoriteProducts) setFavoriteProducts(st.favoriteProducts);
         if (st.favoriteRecipes) setFavoriteRecipes(st.favoriteRecipes);
+        if (st.favoriteMeals) setFavoriteMeals(st.favoriteMeals);
         if (st.customRecipes) setCustomRecipes(st.customRecipes);
       } else {
         const local = loadLocalState(telegramUserId, null);
@@ -1099,6 +1326,8 @@ const OlivierApp = () => {
           if (local.shoppingItems) setShoppingItems(local.shoppingItems);
           if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
           if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+          if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
+      if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
           if (local.customRecipes) setCustomRecipes(local.customRecipes);
         } else {
           setPantryItems(createDefaultPantryItems());
@@ -1126,6 +1355,61 @@ const OlivierApp = () => {
     setShowDateModal(true);
   };
 
+  const handleKus = (item) => {
+    const catalogProduct = PRODUCTS_DB.find(
+      p => p.name.toLowerCase() === item.name.toLowerCase()
+    );
+
+    let portion, portionMeasure;
+    if (catalogProduct && catalogProduct.portion != null) {
+      portion = catalogProduct.portion;
+      portionMeasure = catalogProduct.measure;
+    } else {
+      portion = getDefaultPortion(item.measure);
+      portionMeasure = item.measure;
+    }
+
+    // Конвертируем порцию в единицу измерения, которая хранится у элемента в кладовой
+    const portionInItemMeasure = convertQuantity(portion, portionMeasure, item.measure);
+    const step = getQuantityStep(item.measure);
+    const newQty = roundToStep(Number(item.quantity) - portionInItemMeasure, step);
+
+    if (newQty <= 0) {
+      setPantryItems(prev => prev.filter(p => p.id !== item.id));
+      showNotification(`${item.name} закончился 🪹`);
+    } else {
+      setPantryItems(prev =>
+        prev.map(p => p.id === item.id ? { ...p, quantity: newQty } : p)
+      );
+      showNotification(`Кусь! −${formatQuantityForDisplay(portionInItemMeasure, item.measure)} ${item.measure} ${item.name}`);
+    }
+  };
+
+
+  const handleMealKus = (meal) => {
+    const newPortions = (meal.portions ?? 1) - 1;
+    if (newPortions <= 0) {
+      setPreparedMeals(prev => prev.filter(m => m.id !== meal.id));
+      showNotification(`${meal.name} съедено полностью 🪹`);
+    } else {
+      setPreparedMeals(prev =>
+        prev.map(m => m.id === meal.id ? { ...m, portions: newPortions } : m)
+      );
+      showNotification(`Кусь! Осталось порций: ${newPortions} — ${meal.name}`);
+    }
+  };
+
+  const toggleFavoriteMeal = (meal) => {
+    const isFav = favoriteMeals.some(m => m.id === meal.id);
+    if (isFav) {
+      setFavoriteMeals(prev => prev.filter(m => m.id !== meal.id));
+      showNotification(`${meal.name} удалено из избранного`);
+    } else {
+      setFavoriteMeals(prev => [...prev, meal]);
+      showNotification(`${meal.name} добавлено в избранное`);
+    }
+  };
+
   const updateExpiryDate = (newDate) => {
     if (editingDateProduct && newDate) {
       setPantryItems(prevItems =>
@@ -1151,118 +1435,206 @@ const OlivierApp = () => {
     }));
   };
 
+  /**
+   * Парсит строку количества из Open Food Facts (напр. "500 g", "1 l", "250 мл")
+   * и возвращает { quantity: number, measure: string }
+   * @param {string|undefined} qStr
+   */
   const parseOFFQuantity = (qStr) => {
     if (!qStr) return { quantity: 1, measure: 'шт.' };
-    const s = String(qStr).toLowerCase().trim();
+    const s = qStr.toLowerCase().trim();
     let measure = 'шт.';
-    if (/кг|kg/.test(s)) measure = 'кг.';
-    else if (/мл|ml/.test(s)) measure = 'мл.';
-    else if (/\d\s*г\b|\d\s*g\b/.test(s)) measure = 'г.';
-    else if (/\bл\b|\bl\b/.test(s)) measure = 'л.';
+    if (/кг|kg/.test(s))                          measure = 'кг.';
+    else if (/мл|ml/.test(s))                     measure = 'мл.';
+    else if (/\d\s*г\b|\d\s*g\b/.test(s))         measure = 'г.';
+    else if (/\bл\b|\bl\b/.test(s))               measure = 'л.';
     const numMatch = s.match(/(\d+[.,]?\d*)/);
     const quantity = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : 1;
     return { quantity: isFinite(quantity) && quantity > 0 ? quantity : 1, measure };
   };
 
+  /**
+   * Грубое сопоставление тегов категорий Open Food Facts с нашими категориями
+   * @param {string[]|undefined} tags
+   */
   const mapOFFCategory = (tags) => {
     if (!Array.isArray(tags)) return '🏷️ Прочее';
     const t = tags.join(' ').toLowerCase();
-    if (/milk|dairy|lait/.test(t)) return '🥛 Молочные';
-    if (/yogurt|kefir|ferment/.test(t)) return '🥛 Кисломолочные';
-    if (/cheese/.test(t)) return '🧀 Сыры твердые';
-    if (/butter|margarine/.test(t)) return '🧈 Масло';
-    if (/egg/.test(t)) return '🥚 Яйца';
-    if (/meat|beef|pork|chicken/.test(t)) return '🥩 Мясо';
-    if (/fish|seafood/.test(t)) return '🐟 Рыба свежая';
-    if (/vegetable|овощ/.test(t)) return '🥦 Овощи';
-    if (/fruit|фрукт/.test(t)) return '🍎 Фрукты';
-    if (/bread|выпечка/.test(t)) return '🍞 Хлеб';
-    if (/pasta|макарон/.test(t)) return '🍝 Макароны';
-    if (/cereal|grain|крупа/.test(t)) return '🌾 Крупы';
-    if (/sauce|кетчуп|соус/.test(t)) return '🍯 Соусы';
-    if (/coffee|кофе/.test(t)) return '☕ Кофе';
-    if (/tea|чай/.test(t)) return '☕ Чай';
+    if (/milk|dairy|lait/.test(t))          return '🥛 Молочные';
+    if (/yogurt|kefir|ferment/.test(t))     return '🥛 Кисломолочные';
+    if (/cheese/.test(t))                   return '🧀 Сыры твердые';
+    if (/butter|margarine/.test(t))         return '🧈 Масло';
+    if (/egg/.test(t))                      return '🥚 Яйца';
+    if (/meat|beef|pork|chicken/.test(t))   return '🥩 Мясо';
+    if (/fish|seafood/.test(t))             return '🐟 Рыба свежая';
+    if (/vegetable|овощ/.test(t))           return '🥦 Овощи';
+    if (/fruit|фрукт/.test(t))              return '🍎 Фрукты';
+    if (/bread|выпечка/.test(t))            return '🍞 Хлеб';
+    if (/pasta|макарон/.test(t))            return '🍝 Макароны';
+    if (/cereal|grain|крупа/.test(t))       return '🌾 Крупы';
+    if (/sauce|кетчуп|соус/.test(t))        return '🍯 Соусы';
+    if (/water|вода/.test(t))               return '💧 Вода';
+    if (/juice|сок/.test(t))               return '🧃 Соки';
+    if (/chocolate|candy|sweet/.test(t))    return '🍫 Сладости';
+    if (/snack|chips|снек/.test(t))         return '🍿 Снеки';
+    if (/coffee|кофе/.test(t))              return '☕ Кофе';
+    if (/tea|чай/.test(t))                  return '☕ Чай';
     return '🏷️ Прочее';
   };
 
-  const processBarcodeToShopping = async (codeRaw) => {
-    const code = String(codeRaw || '').trim();
-    if (!code) return;
+  /** Запрос к Open Food Facts по штрихкоду */
+  /** Применяет найденный продукт к форме добавления */
+  const applyBarcodeResult = (data, sourceLabel) => {
+    const fullName = data.name && data.brand &&
+      !data.name.toLowerCase().includes(data.brand.toLowerCase())
+      ? `${data.name} (${data.brand})`
+      : data.name || '';
+    setAddFormData(prev => ({
+      ...prev,
+      name:      fullName || prev.name,
+      measure:   data.measure   || prev.measure,
+      quantity:  data.quantity  || prev.quantity,
+      category:  data.category  || prev.category,
+      autoFilled: !!fullName
+    }));
+    showNotification(fullName
+      ? `${sourceLabel}: ${fullName}`
+      : `${sourceLabel} — уточните название`);
+  };
 
-    // 1) Пробуем локальный каталог
-    const fromLocal = PRODUCTS_DB.find((p) => String(p?.barcode || '').trim() === code);
-    if (fromLocal) {
-      addToShopping(fromLocal, 1);
-      setShowAddModal(false);
-      return;
-    }
-
-    // 2) Open Food Facts
+  /** Сохраняет продукт в Supabase products_cache (тихо, без блокировки) */
+  const saveToBarcodeCache = async (data) => {
+    if (!supabase) return;
     try {
-      const res = await fetch(
-        `https://world.openfoodfacts.org/api/v2/product/${code}` +
-        `?fields=product_name,product_name_ru,brands,quantity,categories_tags`
+      await supabase.from('products_cache').upsert(
+        { ...data, updated_at: new Date().toISOString() },
+        { onConflict: 'barcode' }
       );
-      if (res.ok) {
-        const json = await res.json();
-        if (json.status === 1 && json.product) {
-          const p = json.product;
-          const name = (p.product_name_ru || p.product_name || '').trim();
-          const { quantity, measure } = parseOFFQuantity(p.quantity);
-          if (name) {
-            addToShopping({
-              name,
-              category: mapOFFCategory(p.categories_tags),
-              measure,
-              shelfLife: 7
-            }, quantity);
-            setShowAddModal(false);
+    } catch { /* кэширование некритично */ }
+  };
+
+  /**
+   * Каскадный поиск продукта по штрихкоду:
+   * 1. Supabase products_cache
+   * 2. Open Food Facts
+   * 3. UPC Item DB (бесплатный fallback)
+   * 4. EAN-DB (через /api/barcode — ключ на сервере)
+   * 5. Ручной ввод
+   */
+  const fetchByBarcode = async (code) => {
+    setBarcodeLoading(true);
+    setPendingBarcode(code); // запоминаем баркод сразу — пригодится при ручном вводе
+    try {
+      // ── 1. Supabase cache ──────────────────────────────────────────────────
+      if (supabase) {
+        try {
+          const { data } = await supabase
+            .from('products_cache')
+            .select('name,brand,category,measure,quantity,image_url,source')
+            .eq('barcode', code)
+            .maybeSingle();
+          if (data?.name) {
+            const label = data.source === 'manual'
+              ? '👥 Из базы пользователей'
+              : '📦 Из кэша';
+            applyBarcodeResult(data, label);
+            return;
+          }
+        } catch { /* продолжаем каскад */ }
+      }
+
+      // ── 2. Open Food Facts ─────────────────────────────────────────────────
+      try {
+        const res = await fetch(
+          `https://world.openfoodfacts.org/api/v2/product/${code}` +
+          `?fields=product_name,product_name_ru,brands,quantity,categories_tags,image_front_url`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          if (json.status === 1 && json.product) {
+            const p = json.product;
+            const name  = (p.product_name_ru || p.product_name || '').trim();
+            const brand = (p.brands || '').split(',')[0].trim();
+            const { quantity, measure } = parseOFFQuantity(p.quantity);
+            const category  = mapOFFCategory(p.categories_tags);
+            const image_url = p.image_front_url || '';
+            if (name || brand) {
+              const result = { barcode: code, name, brand, category, measure, quantity, image_url, source: 'off' };
+              saveToBarcodeCache(result);
+              applyBarcodeResult(result, '🌍 Open Food Facts');
+              return;
+            }
+          }
+        }
+      } catch { /* продолжаем */ }
+
+      // ── 3. UPC Item DB (бесплатный, без ключа) ────────────────────────────
+      try {
+        const res = await fetch(
+          `https://api.upcitemdb.com/prod/trial/lookup?upc=${code}`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          const item = json.items?.[0];
+          if (item?.title) {
+            const result = {
+              barcode:   code,
+              name:      item.title,
+              brand:     item.brand || '',
+              category:  item.category || '',
+              measure:   'шт.',
+              quantity:  1,
+              image_url: item.images?.[0] || '',
+              source:    'upcitemdb'
+            };
+            saveToBarcodeCache(result);
+            applyBarcodeResult(result, '🔍 UPC Item DB');
             return;
           }
         }
-      }
-    } catch (e) {
-      // ignore and fallthrough
-    }
+      } catch { /* продолжаем */ }
 
-    showNotification('Штрихкод не найден. Добавьте товар вручную.');
-  };
-
-  const handleBarcodeScanToShopping = () => {
-    if (barcodeLookupLoading) return;
-    const tgWebApp = window.Telegram?.WebApp;
-    setBarcodeLookupLoading(true);
-
-    const done = () => setBarcodeLookupLoading(false);
-
-    if (tgWebApp?.showScanQrPopup) {
+      // ── 4. EAN-DB (через серверный прокси /api/barcode) ───────────────────
       try {
-        tgWebApp.showScanQrPopup(
-          { text: 'Наведите камеру на штрихкод' },
-          (text) => {
-            tgWebApp.closeScanQrPopup?.();
-            if (!text) {
-              done();
-              return;
-            }
-            processBarcodeToShopping(text).finally(done);
-            return true;
+        const res = await fetch(`/api/barcode?code=${code}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.found && json.name) {
+            const result = {
+              barcode:   code,
+              name:      json.name,
+              brand:     json.brand  || '',
+              category:  json.category || '',
+              measure:   'шт.',
+              quantity:  1,
+              image_url: json.image_url || '',
+              source:    'eandb'
+            };
+            saveToBarcodeCache(result);
+            applyBarcodeResult(result, '📗 EAN-DB');
+            return;
           }
-        );
-      } catch {
-        done();
-        showNotification('Не удалось открыть сканер');
-      }
-      return;
-    }
+        }
+      } catch { /* продолжаем */ }
 
-    const manual = window.prompt('Введите штрихкод');
-    if (!manual) {
-      done();
-      return;
+      // ── 5. Не найден ──────────────────────────────────────────────────────
+      showNotification('Штрихкод не найден — введите данные вручную');
+
+    } finally {
+      setBarcodeLoading(false);
     }
-    processBarcodeToShopping(manual).finally(done);
   };
+
+  /** Открывает встроенный сканер штрихкодов (ZXing, поддерживает EAN-13/UPC/QR) */
+  const handleBarcodeScan = () => {
+    setShowBarcodeScanner(true);
+  };
+
+  const handleBarcodeDetected = useCallback((code) => {
+    setShowBarcodeScanner(false);
+    setShowAddModal(true); // открываем форму добавления (если ещё не открыта)
+    fetchByBarcode(code.trim());
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToPantry = (product, quantity = 1, expiryDate = null) => {
     const existingItem = pantryItems.find(item => item.name === product.name);
@@ -1364,7 +1736,21 @@ const OlivierApp = () => {
       toggleFavoriteProduct(selectedProduct);
     }
 
+    // Если есть привязанный баркод — сохраняем продукт в кэш
+    if (pendingBarcode) {
+      saveToBarcodeCache({
+        barcode:  pendingBarcode,
+        name:     selectedProduct.name,
+        brand:    '',
+        category: selectedProduct.category || '🏷️ Прочее',
+        measure:  measureToStore,
+        quantity: qtyToStore,
+        source:   'manual'
+      });
+    }
+
     setShowAddModal(false);
+    setPendingBarcode('');
     setAddFormData({
       name: '',
       category: '',
@@ -1396,6 +1782,141 @@ const OlivierApp = () => {
       showNotification(`${recipe.name} добавлен в избранное`);
     }
   };
+
+  const normalizeSearch = (s) => {
+    if (!s) return '';
+    try {
+      return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    } catch {
+      return String(s).toLowerCase().trim();
+    }
+  };
+
+  const openRecipeLibrary = () => {
+    setShowRecipeLibrary(true);
+  };
+
+  const closeRecipeLibrary = () => {
+    setShowRecipeLibrary(false);
+    setRecipeLibraryQuery('');
+  };
+
+  const loadRecipeLibrary = useCallback(async () => {
+    if (!supabase) {
+      showNotification('Supabase не подключён к этой сборке');
+      return;
+    }
+    setRecipeLibraryLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('recipes')
+        .select('id,name,tags,image,description,time,difficulty,ingredients,steps')
+        .order('name', { ascending: true });
+      if (error) {
+        console.error('recipes load', error);
+        showNotification('Не удалось загрузить библиотеку');
+        return;
+      }
+      setRecipeLibrary(Array.isArray(data) ? data : []);
+
+      if (telegramUserId) {
+        const { data: favRows } = await supabase
+          .from('user_favorites')
+          .select('recipe_id')
+          .eq('telegram_user_id', telegramUserId);
+        const s = new Set((favRows || []).map((r) => r.recipe_id));
+        setLibraryFavoriteIds(s);
+      } else {
+        setLibraryFavoriteIds(new Set());
+      }
+    } finally {
+      setRecipeLibraryLoading(false);
+    }
+  }, [telegramUserId]);
+
+  useEffect(() => {
+    if (!showRecipeLibrary) return;
+    loadRecipeLibrary();
+  }, [showRecipeLibrary, loadRecipeLibrary]);
+
+  const toggleLibraryFavorite = async (recipe) => {
+    if (!supabase || !telegramUserId) {
+      showNotification('Избранное доступно в Telegram при подключённом Supabase');
+      return;
+    }
+    const id = recipe?.id;
+    if (!id) return;
+
+    const has = libraryFavoriteIds.has(id);
+    try {
+      if (has) {
+        await supabase
+          .from('user_favorites')
+          .delete()
+          .eq('telegram_user_id', telegramUserId)
+          .eq('recipe_id', id);
+        setLibraryFavoriteIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        showNotification('Удалено из избранного');
+        loadMyLibraryFavorites();
+      } else {
+        await supabase
+          .from('user_favorites')
+          .upsert(
+            { telegram_user_id: telegramUserId, recipe_id: id },
+            { onConflict: 'telegram_user_id,recipe_id' }
+          );
+        setLibraryFavoriteIds((prev) => new Set(prev).add(id));
+        showNotification('Добавлено в избранное');
+        loadMyLibraryFavorites();
+      }
+    } catch (e) {
+      console.error('favorite toggle', e);
+      showNotification('Не удалось обновить избранное');
+    }
+  };
+
+  const loadMyLibraryFavorites = useCallback(async () => {
+    if (!supabase || !telegramUserId) {
+      setMyLibraryFavorites([]);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('recipe_id, recipes ( id, name, tags, image, description, time, difficulty, ingredients, steps )')
+        .eq('telegram_user_id', telegramUserId);
+      if (error) {
+        console.error('user_favorites load', error);
+        return;
+      }
+      const recipes = (data || [])
+        .map((row) => row.recipes)
+        .filter(Boolean)
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          tags: r.tags,
+          image: r.image || '',
+          description: r.description || '',
+          time: r.time || 0,
+          difficulty: r.difficulty || '',
+          ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+          steps: Array.isArray(r.steps) ? r.steps : []
+        }));
+      setMyLibraryFavorites(recipes);
+    } catch (e) {
+      console.error('loadMyLibraryFavorites', e);
+    }
+  }, [telegramUserId]);
+
+  useEffect(() => {
+    if (currentTab !== 'recipes') return;
+    loadMyLibraryFavorites();
+  }, [currentTab, loadMyLibraryFavorites]);
 
   // Функции для работы с рецептами
   const getAvailableRecipes = () => {
@@ -1704,6 +2225,7 @@ const OlivierApp = () => {
   };
 
   const hasExpiredItems = pantryItems.some(item => item.expiryDate < new Date());
+  const [sortByExpiry, setSortByExpiry] = useState(false);
 
   // Функция для группировки продуктов по категориям
   const groupItemsByCategory = (items) => {
@@ -1730,6 +2252,126 @@ const OlivierApp = () => {
     } else {
       return { status: 'fresh', color: 'text-gray-600', days: diffDays };
     }
+  };
+
+  const getLocalDayKey = (d) => {
+    const date = d instanceof Date ? d : new Date(d);
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const notifiedExpiryRef = useRef(new Set());
+  const lastExpiryDayKeyRef = useRef(null);
+
+  // Ассистентские уведомления: сегодня вечером (после 17:00) для продуктов,
+  // срок годности которых заканчивается сегодня.
+  useEffect(() => {
+    const check = () => {
+      const now = new Date();
+      if (now.getHours() < 17) return;
+
+      const todayKey = getLocalDayKey(now);
+      if (lastExpiryDayKeyRef.current !== todayKey) {
+        lastExpiryDayKeyRef.current = todayKey;
+        notifiedExpiryRef.current = new Set();
+      }
+
+      const candidates = pantryItems
+        .map((item) => ({ item, expiry: item?.expiryDate ? new Date(item.expiryDate) : null }))
+        .filter(({ item, expiry }) => {
+          if (!item || !expiry) return false;
+          if (expiry <= now) return false;
+          return getLocalDayKey(expiry) === todayKey;
+        })
+        .sort((a, b) => a.expiry - b.expiry);
+
+      const chosen = candidates[0];
+      if (!chosen) return;
+
+      const notifyKey = `${chosen.item.id}_${todayKey}`;
+      if (notifiedExpiryRef.current.has(notifyKey)) return;
+
+      notifiedExpiryRef.current.add(notifyKey);
+      showNotification(
+        `Срок годности '${chosen.item.name}' истекает сегодня вечером. Не забудьте поужинать!`,
+        3500
+      );
+    };
+
+    check();
+    const id = setInterval(check, 60000);
+    return () => clearInterval(id);
+  }, [pantryItems]);
+
+  const toLocalDate = (dateStr) => {
+    // Дата из input type="date" приходит как YYYY-MM-DD.
+    // Добавляем "T00:00:00", чтобы парсинг не уезжал из-за таймзоны.
+    try {
+      return new Date(`${dateStr}T00:00:00`);
+    } catch {
+      return new Date();
+    }
+  };
+
+  const calcMealExpiresAt = (preparedDate, category) => {
+    const base = preparedDate instanceof Date ? preparedDate : new Date(preparedDate);
+    const days = MEAL_DEFAULT_DAYS_BY_CATEGORY[category] ?? 1;
+    return new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+  };
+
+  const formatHoursLeft = (expiresAt) => {
+    if (!expiresAt) return '';
+    const diffMs = expiresAt - new Date();
+    const diffHours = Math.ceil(diffMs / (1000 * 60 * 60));
+    if (diffHours >= 0) return `${diffHours} ч осталось`;
+    return `${Math.abs(diffHours)} ч просрочено`;
+  };
+
+  const handleAddPreparedMeal = () => {
+    const name = mealFormData.name.trim();
+    const category = mealFormData.category;
+    const preparedDateStr = mealFormData.preparedDate;
+
+    if (!name) {
+      showNotification('Введите название блюда');
+      return;
+    }
+    if (!category) {
+      showNotification('Выберите категорию');
+      return;
+    }
+    if (!preparedDateStr) {
+      showNotification('Выберите дату приготовления');
+      return;
+    }
+
+    const preparedDate = toLocalDate(preparedDateStr);
+    const expiresAt = calcMealExpiresAt(preparedDate, category);
+
+    const defaultPortions = {
+      'Суп': 4, 'Гарнир': 3, 'Мясо': 3,
+      'Рыба': 3, 'Салат': 2, 'Десерт': 6
+    };
+    const newMeal = {
+      id: Date.now(),
+      name,
+      category,
+      preparedDate,
+      expiresAt,
+      portions: defaultPortions[category] ?? 3
+    };
+
+    setPreparedMeals((prev) => [newMeal, ...prev]);
+    showNotification('Готовое блюдо добавлено');
+
+    setShowAddMealModal(false);
+    setMealFormData({
+      name: '',
+      category: 'Суп',
+      preparedDate: new Date().toISOString().split('T')[0]
+    });
   };
 
   // Функция добавления продукта в корзину из кладовой
@@ -1800,42 +2442,81 @@ const OlivierApp = () => {
           </div>
         </div>
       )}
-      {/* Top Bar */}
-      <div className="bg-white shadow-sm p-4 pr-14 flex flex-col items-center justify-center relative gap-0.5">
-        <button
-          type="button"
-          onClick={() => setShowShareModal(true)}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl hover:bg-blue-50 ${
-            supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
-          }`}
-          title={
-            !telegramUserId
-              ? 'Семейный холодильник — откройте из Telegram'
-              : !supabase
-                ? 'Нужны переменные Supabase в сборке (Vercel)'
-                : 'Семейный холодильник'
-          }
-          aria-label="Поделиться кладовой"
-        >
-          <Share2 size={22} />
-        </button>
-        <h1 className="text-lg font-semibold capitalize">
-          {currentTab === 'pantry' && 'Кладовая'}
-          {currentTab === 'favorites' && 'Избранное'}
-          {currentTab === 'recipes' && 'Рецепты'}
-          {currentTab === 'shopping' && 'Покупки'}
-          {hasExpiredItems && currentTab === 'pantry' && (
-            <span className="ml-2 text-orange-500">!</span>
-          )}
-        </h1>
+      {/* Top Bar: иконки в одном ряду с заголовком, без absolute — ниже выреза/notch */}
+      <div
+        className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
+        style={{
+          /* В Telegram не суммируем env(safe-area) с contentSafeAreaInset — иначе огромный зазор под «Закрыть» */
+          paddingTop: tg
+            ? `${Math.max(telegramHeaderPadPx + 25, 10)}px`
+            : 'max(1rem, calc(env(safe-area-inset-top, 0px) + 0.75rem))'
+        }}
+      >
+        <div className="flex items-center gap-1 min-h-[48px]">
+          <div className="shrink-0 w-12 flex items-center justify-center">
+            {currentTab === 'pantry' && pantrySubTab === 'products' ? (
+              <button
+                type="button"
+                onClick={() => setSortByExpiry(prev => !prev)}
+                className={`p-2 rounded-xl transition-colors ${
+                  sortByExpiry ? 'text-orange-500 bg-orange-50' : 'text-gray-400 hover:bg-gray-50'
+                }`}
+                title={sortByExpiry ? 'Сортировка по сроку: вкл.' : 'Сортировать по сроку годности'}
+                aria-label="Сортировать по сроку годности"
+              >
+                <Calendar size={22} />
+              </button>
+            ) : currentTab === 'recipes' ? (
+              <button
+                type="button"
+                onClick={openRecipeLibrary}
+                className="p-2 rounded-xl transition-colors text-gray-400 hover:bg-gray-50 hover:text-gray-700"
+                title="Библиотека рецептов"
+                aria-label="Открыть библиотеку рецептов"
+              >
+                <BookOpen size={22} />
+              </button>
+            ) : null}
+          </div>
+          <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1">
+            {currentTab === 'pantry' && 'Кладовая'}
+            {currentTab === 'favorites' && 'Избранное'}
+            {currentTab === 'recipes' && 'Рецепты'}
+            {currentTab === 'shopping' && 'Покупки'}
+            {hasExpiredItems && currentTab === 'pantry' && (
+              <span className="ml-2 text-orange-500">!</span>
+            )}
+          </h1>
+          <div className="shrink-0 w-12 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setShowShareModal(true)}
+              className={`p-2 rounded-xl hover:bg-blue-50 ${
+                supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
+              }`}
+              title={
+                !telegramUserId
+                  ? 'Семейный холодильник — откройте из Telegram'
+                  : !supabase
+                    ? 'Нужны переменные Supabase в сборке (Vercel)'
+                    : 'Семейный холодильник'
+              }
+              aria-label="Поделиться кладовой"
+            >
+              <Share2 size={22} />
+            </button>
+          </div>
+        </div>
         {sharedFridgeId && (
-          <span className="text-xs text-blue-600 font-medium">Общая кладовая</span>
+          <span className="text-xs text-blue-600 font-medium text-center block">
+            Общая кладовая
+          </span>
         )}
       </div>
 
       {showShareModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]" onClick={() => setShowShareModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <h2 className="text-xl font-bold pr-8">Семейный холодильник</h2>
               <button
@@ -1937,128 +2618,256 @@ const OlivierApp = () => {
       )}
 
   {/* Content */}
-  <div className="p-4 pb-28" ref={contentRef}>
+  <div className="px-4 pt-2 pb-28" ref={contentRef}>
         {/* Main Content */}
         <div className="space-y-4">
           {currentTab === 'pantry' && (
             <div>
-              
-              {pantryItems.length === 0 ? (
+
+              <div className="flex gap-2 bg-white rounded-xl p-1 shadow-sm mb-4">
+                <button
+                  type="button"
+                  onClick={() => setPantrySubTab('products')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    pantrySubTab === 'products' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  Продукты
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPantrySubTab('meals')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    pantrySubTab === 'meals' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  Готовые блюда
+                </button>
+              </div>
+
+              {pantrySubTab === 'products' && (pantryItems.length === 0 ? (
                 <div className="text-center text-gray-500 py-8">
                   Кладовая пуста. Добавьте продукты!
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  {Object.entries(groupItemsByCategory(pantryItems)).map(([category, items]) => (
-                    <div key={category}>
-                      <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                        {category}
-                      </h3>
-                      <div className="space-y-2">
-                        {items.map(item => {
-                          const expiryStatus = getExpiryStatus(item.expiryDate);
-                          return (
-                            <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm">
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      onClick={() => {
-                                          setEditingItem(item);
-                                          setEditFormData({
-                                            name: item.name,
-                                            quantity: item.quantity,
-                                            measure: item.measure,
-                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                          });
-                                          setShowEditModal(true);
-                                        }}
-                                      className="font-semibold text-gray-900 capitalize hover:text-blue-600 transition-colors"
-                                    >
-                                      {item.name}
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                          setEditingItem(item);
-                                          setEditFormData({
-                                            name: item.name,
-                                            quantity: item.quantity,
-                                            measure: item.measure,
-                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                          });
-                                          setShowEditModal(true);
-                                        }}
-                                      className="text-gray-400 hover:text-blue-600 transition-colors"
-                                    >
-                                      <Edit3 size={16} />
-                                    </button>
-                                  </div>
-                                  
-                                  <div className="text-sm mt-1">
-                                    <span className="text-gray-700">
-                                      {item.quantity} {item.measure}
-                                    </span>
-                                    <button
-                                      onClick={() => handleDateClick(item)}
-                                      className={`ml-3 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''} hover:underline cursor-pointer transition-all font-medium`}
-                                      title="Изменить срок годности"
-                                    >
-                                      до {item.expiryDate.toLocaleDateString('ru-RU')}
-                                    </button>
-                                    <span className={`ml-1 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''}`}>
-                                      ({expiryStatus.status === 'expired' 
-                                        ? `просрочено ${expiryStatus.days} дн.` 
-                                        : `${expiryStatus.days} дн.`})
-                                    </span>
-                                  </div>
-                                </div>
-                                
-                                <div className="flex items-center gap-2 ml-4">
-                                  <button
-                                    onClick={() => addPantryItemToCart(item)}
-                                    className="text-blue-500 hover:text-blue-700 transition-colors"
-                                    title="Добавить в покупки"
-                                  >
-                                    <ShoppingCart size={20} />
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      const product = {
-                                        name: item.name,
-                                        category: item.category,
-                                        measure: item.measure,
-                                        shelfLife: item.shelfLife || 7
-                                      };
-                                      toggleFavoriteProduct(product);
-                                    }}
-                                    className={`transition-colors ${
-                                      favoriteProducts.some(fav => fav.name === item.name) 
-                                        ? 'text-red-500 hover:text-red-700' 
-                                        : 'text-gray-400 hover:text-red-500'
-                                    }`}
-                                    title="Добавить в избранное"
-                                  >
-                                    <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setPantryItems(prev => prev.filter(p => p.id !== item.id));
-                                      showNotification(`${item.name} удален из кладовой`);
-                                    }}
-                                    className="text-red-500 hover:text-red-700 transition-colors"
-                                    title="Удалить продукт"
-                                  >
-                                    <Trash2 size={20} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
+              ) : (() => {
+                const renderItem = (item, showCategory = false) => {
+                  const expiryStatus = getExpiryStatus(item.expiryDate);
+                  return (
+                    <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setEditingItem(item);
+                                setEditFormData({
+                                  name: item.name,
+                                  quantity: item.quantity,
+                                  measure: item.measure,
+                                  expiryDate: item.expiryDate.toISOString().split('T')[0],
+                                  category: item.category || '🏷️ Прочее'
+                                });
+                                setShowEditModal(true);
+                              }}
+                              className="block max-w-full text-left text-sm font-semibold leading-snug text-gray-900 hover:text-blue-600 transition-colors"
+                            >
+                              {item.name}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingItem(item);
+                                setEditFormData({
+                                  name: item.name,
+                                  quantity: item.quantity,
+                                  measure: item.measure,
+                                  expiryDate: item.expiryDate.toISOString().split('T')[0],
+                                  category: item.category || '🏷️ Прочее'
+                                });
+                                setShowEditModal(true);
+                              }}
+                              className="text-gray-400 hover:text-blue-600 transition-colors"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                          </div>
+                          {showCategory && (
+                            <div className="text-xs text-gray-400 mt-0.5">{item.category || '🏷️ Прочее'}</div>
+                          )}
+                          <div className="text-sm mt-1">
+                            <span className="text-gray-700">
+                              {item.quantity} {item.measure}
+                            </span>
+                            <button
+                              onClick={() => handleDateClick(item)}
+                              className={`ml-3 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''} hover:underline cursor-pointer transition-all font-medium`}
+                              title="Изменить срок годности"
+                            >
+                              до {item.expiryDate.toLocaleDateString('ru-RU')}
+                            </button>
+                            <span className={`ml-1 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''}`}>
+                              ({expiryStatus.status === 'expired'
+                                ? `просрочено ${expiryStatus.days} дн.`
+                                : `${expiryStatus.days} дн.`})
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => handleKus(item)}
+                            className="text-xs bg-orange-100 text-orange-600 hover:bg-orange-200 active:bg-orange-300 rounded-full px-2 py-1 transition-colors font-semibold leading-tight"
+                            title="Съесть одну порцию"
+                          >
+                            🫦&nbsp;Кусь
+                          </button>
+                          <button
+                            onClick={() => addPantryItemToCart(item)}
+                            className="text-blue-500 hover:text-blue-700 transition-colors"
+                            title="Добавить в покупки"
+                          >
+                            <ShoppingCart size={20} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              const product = {
+                                name: item.name,
+                                category: item.category,
+                                measure: item.measure,
+                                shelfLife: item.shelfLife || 7
+                              };
+                              toggleFavoriteProduct(product);
+                            }}
+                            className={`transition-colors ${
+                              favoriteProducts.some(fav => fav.name === item.name)
+                                ? 'text-red-500 hover:text-red-700'
+                                : 'text-gray-400 hover:text-red-500'
+                            }`}
+                            title="Добавить в избранное"
+                          >
+                            <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setPantryItems(prev => prev.filter(p => p.id !== item.id));
+                              showNotification(`${item.name} удален из кладовой`);
+                            }}
+                            className="text-red-500 hover:text-red-700 transition-colors"
+                            title="Удалить продукт"
+                          >
+                            <Trash2 size={20} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  );
+                };
+
+                if (sortByExpiry) {
+                  const sorted = [...pantryItems].sort(
+                    (a, b) => new Date(a.expiryDate) - new Date(b.expiryDate)
+                  );
+                  return (
+                    <div className="space-y-2">
+                      {sorted.map(item => renderItem(item, true))}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-6">
+                    {Object.entries(groupItemsByCategory(pantryItems)).map(([category, items]) => (
+                      <div key={category}>
+                        <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                          {category}
+                        </h3>
+                        <div className="space-y-2">
+                          {items.map(item => renderItem(item, false))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })())}
+            </div>
+          )}
+
+          {currentTab === 'pantry' && pantrySubTab === 'meals' && (
+            <div className="space-y-3">
+              {preparedMeals.length === 0 ? (
+                <div className="text-center text-gray-500 py-8">
+                  Пока нет готовых блюд. Добавьте первое!
                 </div>
+              ) : (
+                [...preparedMeals]
+                  .sort((a, b) => a.expiresAt - b.expiresAt)
+                  .map((meal) => (
+                    <div
+                      key={meal.id}
+                      className="bg-orange-50 border border-orange-100 rounded-xl p-4 shadow-sm"
+                    >
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-gray-900 text-left">
+                            {meal.name}
+                          </div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            {meal.category}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Приготовлено: {meal.preparedDate ? meal.preparedDate.toLocaleDateString('ru-RU') : '—'}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Истекает: {meal.expiresAt ? meal.expiresAt.toLocaleDateString('ru-RU') : '—'}
+                          </div>
+                          {meal.portions != null && (
+                            <div className="text-xs text-orange-600 font-semibold mt-1">
+                              Порций осталось: {meal.portions}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <div
+                            className={`text-xs font-semibold px-2 py-1 rounded-lg ${
+                              meal.expiresAt && meal.expiresAt < new Date()
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-yellow-100 text-yellow-700'
+                            }`}
+                          >
+                            {formatHoursLeft(meal.expiresAt)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleMealKus(meal)}
+                              className="text-xs bg-orange-100 text-orange-600 hover:bg-orange-200 active:bg-orange-300 rounded-full px-2 py-1 transition-colors font-semibold leading-tight"
+                              title="Съесть одну порцию"
+                            >
+                              🫦&nbsp;Кусь
+                            </button>
+                            <button
+                              onClick={() => toggleFavoriteMeal(meal)}
+                              className={`transition-colors ${
+                                favoriteMeals.some(m => m.id === meal.id)
+                                  ? 'text-red-500 hover:text-red-700'
+                                  : 'text-gray-400 hover:text-red-500'
+                              }`}
+                              title="В избранное"
+                            >
+                              <Heart size={20} fill={favoriteMeals.some(m => m.id === meal.id) ? 'currentColor' : 'none'} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setPreparedMeals(prev => prev.filter(m => m.id !== meal.id));
+                                showNotification(`${meal.name} удалено`);
+                              }}
+                              className="text-red-500 hover:text-red-700 transition-colors"
+                              title="Удалить блюдо"
+                            >
+                              <Trash2 size={20} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
               )}
             </div>
           )}
@@ -2068,48 +2877,50 @@ const OlivierApp = () => {
               
               {/* Панель управления */}
               {shoppingItems.length > 0 && (
-                <div className="flex flex-wrap items-stretch gap-3 bg-white rounded-xl p-4 shadow-sm mb-6">
+                <div className="flex flex-nowrap items-stretch gap-2 bg-white rounded-xl p-3 shadow-sm mb-6">
                   <button
+                    type="button"
                     onClick={() => {
                       if (window.confirm('Удалить все товары из списка покупок?')) {
                         setShoppingItems([]);
                         showNotification('Список покупок очищен');
                       }
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-red-500 text-white px-4 py-3 rounded-lg hover:bg-red-600 transition-colors"
+                    className="flex-1 min-w-0 flex items-center justify-center gap-1.5 bg-red-500 text-white px-2 py-2.5 rounded-lg hover:bg-red-600 transition-colors text-sm font-semibold"
                   >
-                    <Trash2 size={16} />
-                    Удалить всё
+                    <Trash2 size={15} className="shrink-0" />
+                    <span className="truncate">Удалить всё</span>
                   </button>
                   <button
+                    type="button"
                     onClick={moveCompletedItemsToPantry}
                     disabled={!shoppingItems.some(item => item.completed)}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-semibold transition-colors ${
+                    className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-lg text-sm font-semibold transition-colors ${
                       shoppingItems.some(item => item.completed)
                         ? 'bg-green-500 text-white hover:bg-green-600 shadow-md'
                         : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                     }`}
                   >
-                    <Check size={18} />
-                    Перенести в кладовую
+                    <Check size={16} className="shrink-0" />
+                    <span className="truncate">В кладовую</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => {
                       const textList = `Закупись:\n${Object.entries(groupItemsByCategory(shoppingItems))
                         .map(([category, items]) => {
-                          const categoryItems = items.map(item => 
-                            `${item.completed ? '✓' : '•'} ${item.name} (${item.quantity} ${item.measure})${item.note ? ` - ${item.note}` : ''}`
-                          ).join('\n');
+                          const categoryItems = items.map((item) => formatShoppingExportLine(item)).join('\n');
                           return `${category}:\n${categoryItems}`;
                         }).join('\n\n')}`;
                       navigator.clipboard.writeText(textList).then(() => {
                         showNotification('Список скопирован в буфер обмена');
                       });
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition-colors"
+                    className="shrink-0 w-11 h-11 self-center flex items-center justify-center rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm"
+                    title="Экспорт: скопировать список"
+                    aria-label="Экспорт списка в буфер обмена"
                   >
-                    <FileText size={16} />
-                    Экспорт
+                    <Upload size={18} strokeWidth={2.25} />
                   </button>
                 </div>
               )}
@@ -2170,7 +2981,8 @@ const OlivierApp = () => {
                                 name: item.name,
                                 quantity: item.quantity,
                                 measure: item.measure,
-                                expiryDate: ''
+                                expiryDate: '',
+                                category: item.category || '🏷️ Прочее'
                               });
                               setShowEditModal(true);
                             }}
@@ -2374,6 +3186,21 @@ const OlivierApp = () => {
                   </button>
                 </div>
                 <div className="space-y-4">
+                  {myLibraryFavorites.map((recipe) => (
+                    <RecipeCard
+                      key={`fav-${recipe.id}`}
+                      recipe={recipe}
+                      pantryItems={pantryItems}
+                      isCustom={false}
+                      onAddToCart={addRecipeToCart}
+                      onToggleFavorite={toggleLibraryFavorite}
+                      onViewDetails={(r) => {
+                        setSelectedRecipe(r);
+                        setShowRecipeModal(true);
+                      }}
+                      isFavorite={true}
+                    />
+                  ))}
                   {customRecipes.map(recipe => (
                     <RecipeCard 
                       key={recipe.id} 
@@ -2400,12 +3227,30 @@ const OlivierApp = () => {
 
       {/* Floating Add Button */}
       {(currentTab === 'pantry' || currentTab === 'shopping' || currentTab === 'favorites') && (
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
-        >
-          <Plus size={24} />
-        </button>
+        <>
+          <button
+            onClick={() => {
+              if (currentTab === 'pantry' && pantrySubTab === 'meals') {
+                setShowAddMealModal(true);
+              } else {
+                setShowAddModal(true);
+              }
+            }}
+            className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
+          >
+            <Plus size={24} />
+          </button>
+
+          {currentTab === 'pantry' && pantrySubTab === 'products' && (
+            <button
+              onClick={() => setShowBarcodeScanner(true)}
+              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
+              title="Сканировать штрихкод"
+            >
+              <ScanLine size={24} />
+            </button>
+          )}
+        </>
       )}
 
       {/* Bottom Navigation */}
@@ -2454,8 +3299,8 @@ const OlivierApp = () => {
 
       {/* Add Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto overflow-x-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowAddModal(false); setPendingBarcode(''); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">
                 {currentTab === 'pantry' && 'Добавить в кладовую'}
@@ -2463,32 +3308,31 @@ const OlivierApp = () => {
                 {currentTab === 'favorites' && 'Добавить в избранное'}
                 {currentTab === 'recipes' && 'Добавить рецепт'}
               </h2>
-              <div className="flex items-center gap-2">
-                {currentTab === 'shopping' && (
-                  <button
-                    type="button"
-                    onClick={handleBarcodeScanToShopping}
-                    disabled={barcodeLookupLoading}
-                    className="text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
-                    title="Добавить в покупки по штрихкоду"
-                  >
-                    {barcodeLookupLoading ? <Loader2 size={20} className="animate-spin" /> : <ScanLine size={20} />}
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="text-gray-500"
-                >
-                  <X size={24} />
-                </button>
-              </div>
+              <button
+                onClick={() => { setShowAddModal(false); setPendingBarcode(''); }}
+                className="text-gray-500"
+              >
+                <X size={24} />
+              </button>
             </div>
 
-            <div className="space-y-4 min-w-0">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Название продукта
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700">Название продукта</label>
+                  <button
+                    type="button"
+                    onClick={handleBarcodeScan}
+                    disabled={barcodeLoading}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
+                    title="Сканировать штрихкод"
+                  >
+                    {barcodeLoading
+                      ? <Loader2 size={15} className="animate-spin" />
+                      : <ScanLine size={15} />}
+                    {barcodeLoading ? 'Загрузка...' : 'Штрихкод'}
+                  </button>
+                </div>
                 <AutocompleteInput
                   value={addFormData.name}
                   onChange={(value) => setAddFormData(prev => ({ ...prev, name: value, autoFilled: false }))}
@@ -2496,6 +3340,12 @@ const OlivierApp = () => {
                   placeholder="Название продукта"
                   products={PRODUCTS_DB}
                 />
+                {pendingBarcode && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-blue-600">
+                    <ScanLine size={12} />
+                    <span>Штрихкод <span className="font-mono">{pendingBarcode}</span> будет сохранён</span>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -2568,7 +3418,7 @@ const OlivierApp = () => {
                       type="date"
                       value={addFormData.expiryDate}
                       onChange={(e) => setAddFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className={`block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
+                      className={`w-full p-3 border border-gray-200 rounded-xl ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
                     />
                   </div>
                   {addFormData.autoFilled && !addFormData.expiryDate && (
@@ -2590,10 +3440,195 @@ const OlivierApp = () => {
         </div>
       )}
 
+      {/* Add Prepared Meal Modal */}
+      {showAddMealModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => {
+            setShowAddMealModal(false);
+            setMealFormData({
+              name: '',
+              category: 'Суп',
+              preparedDate: new Date().toISOString().split('T')[0]
+            });
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Добавить готовое блюдо</h2>
+              <button
+                onClick={() => {
+                  setShowAddMealModal(false);
+                  setMealFormData({
+                    name: '',
+                    category: 'Суп',
+                    preparedDate: new Date().toISOString().split('T')[0]
+                  });
+                }}
+                className="text-gray-500"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
+                <input
+                  type="text"
+                  value={mealFormData.name}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                  placeholder="Например Борщ"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
+                <select
+                  value={mealFormData.category}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  {MEAL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Дата приготовления</label>
+                <input
+                  type="date"
+                  value={mealFormData.preparedDate}
+                  onChange={(e) => setMealFormData(prev => ({ ...prev, preparedDate: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+              </div>
+
+              <button
+                onClick={handleAddPreparedMeal}
+                className="w-full bg-orange-500 text-white p-3 rounded-xl font-semibold"
+              >
+                Добавить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipe Library (Global) */}
+      {showRecipeLibrary && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[70] flex items-center justify-center p-4" onClick={closeRecipeLibrary}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BookOpen size={20} className="text-gray-700" />
+                <h2 className="text-lg font-bold">Библиотека рецептов</h2>
+              </div>
+              <button onClick={closeRecipeLibrary} className="text-gray-500">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <input
+                  type="text"
+                  value={recipeLibraryQuery}
+                  onChange={(e) => setRecipeLibraryQuery(e.target.value)}
+                  placeholder="Поиск по названию и тегам…"
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  Ищем по названию и тегам во всей базе Supabase
+                </div>
+              </div>
+
+              {recipeLibraryLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="bg-gray-100 rounded-xl p-4 animate-pulse">
+                      <div className="h-4 bg-gray-200 rounded w-2/3 mb-2" />
+                      <div className="h-3 bg-gray-200 rounded w-1/3" />
+                    </div>
+                  ))}
+                </div>
+              ) : (() => {
+                const q = normalizeSearch(recipeLibraryQuery);
+                const filtered = recipeLibrary.filter((r) => {
+                  if (!q) return true;
+                  const name = normalizeSearch(r?.name || '');
+                  const tags = Array.isArray(r?.tags) ? normalizeSearch(r.tags.join(' ')) : normalizeSearch(r?.tags || '');
+                  return name.includes(q) || tags.includes(q);
+                });
+
+                if (filtered.length === 0) {
+                  return <div className="text-center text-gray-500 py-8">Ничего не найдено</div>;
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {filtered.map((r) => {
+                      const isFav = libraryFavoriteIds.has(r.id);
+                      return (
+                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <button
+                              className="flex-1 text-left"
+                              onClick={() => {
+                                // Приводим к формату Recipe Modal
+                                const normalized = {
+                                  id: r.id,
+                                  name: r.name,
+                                  description: r.description || '',
+                                  time: r.time || 0,
+                                  difficulty: r.difficulty || '',
+                                  image: r.image || '',
+                                  ingredients: Array.isArray(r.ingredients) ? r.ingredients : (r.ingredients?.ingredients || []),
+                                  steps: Array.isArray(r.steps) ? r.steps : (r.steps?.steps || [])
+                                };
+                                closeRecipeLibrary();
+                                setSelectedRecipe(normalized);
+                                setShowRecipeModal(true);
+                              }}
+                            >
+                              <div className="font-semibold text-gray-900">{r.name}</div>
+                              {Array.isArray(r.tags) && r.tags.length > 0 && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {r.tags.slice(0, 6).join(' • ')}
+                                </div>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleLibraryFavorite(r)}
+                              className={`p-2 rounded-xl transition-colors ${isFav ? 'text-red-500 bg-red-50' : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'}`}
+                              title={isFav ? 'Убрать из избранного' : 'В избранное'}
+                            >
+                              <Heart size={18} fill={isFav ? 'currentColor' : 'none'} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Modal */}
       {showEditModal && editingItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md overflow-x-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowEditModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Редактировать продукт</h2>
               <button
@@ -2604,7 +3639,7 @@ const OlivierApp = () => {
               </button>
             </div>
 
-            <div className="space-y-4 min-w-0">
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
                 <input
@@ -2664,6 +3699,21 @@ const OlivierApp = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
+                <select
+                  value={editFormData.category}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  <option value="">Выберите категорию</option>
+                  {PRODUCT_CATEGORIES.map(category => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+              </div>
+
+
               {currentTab === 'pantry' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Срок годности</label>
@@ -2672,7 +3722,7 @@ const OlivierApp = () => {
                       type="date"
                       value={editFormData.expiryDate}
                       onChange={(e) => setEditFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none"
+                      className="w-full p-3 border border-gray-200 rounded-xl"
                     />
                   </div>
                 </div>
@@ -2688,6 +3738,7 @@ const OlivierApp = () => {
                             name: editFormData.name,
                             quantity: Number(editFormData.quantity) || item.quantity,
                             measure: editFormData.measure || item.measure,
+                            category: editFormData.category || item.category || '🏷️ Прочее',
                             expiryDate: new Date(editFormData.expiryDate),
                             autoFilled: false
                           }
@@ -2700,7 +3751,8 @@ const OlivierApp = () => {
                             ...item,
                             name: editFormData.name,
                             quantity: Number(editFormData.quantity) || item.quantity,
-                            measure: editFormData.measure || item.measure
+                            measure: editFormData.measure || item.measure,
+                            category: editFormData.category || item.category || '🏷️ Прочее'
                           }
                         : item
                     ));
@@ -2720,16 +3772,47 @@ const OlivierApp = () => {
 
       {/* Recipe Modal */}
       {showRecipeModal && selectedRecipe && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[80]" onClick={() => setShowRecipeModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">{selectedRecipe.name}</h2>
-              <button
-                onClick={() => setShowRecipeModal(false)}
-                className="text-gray-500"
-              >
-                <X size={24} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Если рецепт из Supabase (uuid строкой) — пишем в user_favorites
+                    if (typeof selectedRecipe.id === 'string') {
+                      toggleLibraryFavorite(selectedRecipe);
+                      return;
+                    }
+                    // иначе — локальное избранное
+                    toggleFavoriteRecipe(selectedRecipe);
+                  }}
+                  className={`p-2 rounded-xl transition-colors ${
+                    (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
+                    favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                      ? 'text-red-500 bg-red-50'
+                      : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'
+                  }`}
+                  title="В избранное"
+                >
+                  <Heart
+                    size={20}
+                    fill={
+                      (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
+                      favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                        ? 'currentColor'
+                        : 'none'
+                    }
+                  />
+                </button>
+                <button
+                  onClick={() => setShowRecipeModal(false)}
+                  className="text-gray-500"
+                >
+                  <X size={24} />
+                </button>
+              </div>
             </div>
             
             <img 
@@ -2809,8 +3892,8 @@ const OlivierApp = () => {
 
       {/* Add Recipe Modal */}
       {showAddRecipeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowAddRecipeModal(false); setEditingRecipeId(null); setRecipeFormData({ name: '', ingredients: [], difficulty: 'легкий', time: 30, steps: [''], comments: '', image: '' }); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold">{editingRecipeId ? 'Редактировать рецепт' : 'Добавить рецепт'}</h2>
               <button onClick={() => {
@@ -3113,8 +4196,8 @@ const OlivierApp = () => {
 
       {/* Date Edit Modal */}
       {showDateModal && editingDateProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowDateModal(false); setEditingDateProduct(null); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold">Изменить срок годности</h2>
               <button 
@@ -3148,7 +4231,7 @@ const OlivierApp = () => {
                     updateExpiryDate(e.target.value);
                   }
                 }}
-                className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none focus:border-blue-500 focus:outline-none"
+                className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
                 autoFocus
               />
             </div>
@@ -3168,8 +4251,8 @@ const OlivierApp = () => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirmModal && deletingRecipe && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={cancelDeleteRecipe}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold text-red-600">Удалить рецепт?</h2>
               <button 
@@ -3206,9 +4289,17 @@ const OlivierApp = () => {
         </div>
       )}
 
+      {/* Barcode Scanner */}
+      {showBarcodeScanner && (
+        <BarcodeScannerModal
+          onDetected={handleBarcodeDetected}
+          onClose={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
       {/* Modal Notification */}
       {notification && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 z-[70]">
           <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl border border-gray-200">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-gray-500 rounded-full flex items-center justify-center">
