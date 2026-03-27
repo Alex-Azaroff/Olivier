@@ -494,24 +494,35 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
             )}
           </div>
 
-          {/* Ингредиенты */}
-          <div className="flex flex-wrap gap-1">
-            {recipe.ingredients.map((ingredient, index) => {
-              const status = getIngredientStatus(ingredient);
-              
-              return (
-                <span 
-                  key={index}
-                  className={`text-xs px-2 py-1 rounded-full ${status.color}`}
-                >
-                  {ingredient.name} {ingredient.amount}{ingredient.measure}
-                  {status.status === 'partial' && (
-                    ` (нед: ${formatQuantityForDisplay(Math.max(0, ingredient.amount - (status.available || 0)), ingredient.measure)}${ingredient.measure})`
-                  )}
-                </span>
-              );
-            })}
-          </div>
+          {/* Ингредиенты (не более 5 в карточке) */}
+          {(() => {
+            const MAX_VISIBLE = 5;
+            const visible = recipe.ingredients.slice(0, MAX_VISIBLE);
+            const hiddenCount = recipe.ingredients.length - MAX_VISIBLE;
+            return (
+              <div className="flex flex-wrap gap-1 overflow-hidden max-h-[52px]">
+                {visible.map((ingredient, index) => {
+                  const status = getIngredientStatus(ingredient);
+                  return (
+                    <span
+                      key={index}
+                      className={`text-xs px-2 py-1 rounded-full ${status.color}`}
+                    >
+                      {ingredient.name} {ingredient.amount}{ingredient.measure}
+                      {status.status === 'partial' && (
+                        ` (нед: ${formatQuantityForDisplay(Math.max(0, ingredient.amount - (status.available || 0)), ingredient.measure)}${ingredient.measure})`
+                      )}
+                    </span>
+                  );
+                })}
+                {hiddenCount > 0 && (
+                  <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-500">
+                    +{hiddenCount} ещё
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Кнопки справа в вертикальном ряду */}
