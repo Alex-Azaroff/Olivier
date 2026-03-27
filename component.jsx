@@ -2993,8 +2993,8 @@ const OlivierApp = () => {
               </button>
             ) : null}
           </div>
-          <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1">
-            {currentTab === 'pantry' && 'Кладовая'}
+          <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1 truncate">
+            {currentTab === 'pantry' && (fridgeDisplayName || 'Кладовая')}
             {currentTab === 'favorites' && 'Избранное'}
             {currentTab === 'recipes' && 'Рецепты'}
             {currentTab === 'shopping' && 'Покупки'}
@@ -3022,12 +3022,6 @@ const OlivierApp = () => {
             </button>
           </div>
         </div>
-        {sharedFridgeId && fridgeDisplayName && (
-          <span className="text-xs text-blue-600 font-medium text-center block px-2">
-            {fridgeIsPersonal ? '🏠 ' : '👨‍👩‍👧 '}
-            {fridgeDisplayName}
-          </span>
-        )}
       </div>
 
       {showShareModal && (
