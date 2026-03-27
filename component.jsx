@@ -1922,10 +1922,39 @@ const OlivierApp = () => {
   }, [currentTab, loadMyLibraryFavorites]);
 
   // Функции для работы с рецептами
+  const normalizeIngredientName = (s) => {
+    try {
+      return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    } catch {
+      return String(s).toLowerCase().trim();
+    }
+  };
+
+  const findPantryItemForIngredient = (ingredientName) => {
+    const norm = normalizeIngredientName(ingredientName);
+    return pantryItems.find(item => {
+      const itemNorm = normalizeIngredientName(item.name);
+      return itemNorm === norm || itemNorm.includes(norm) || norm.includes(itemNorm);
+    });
+  };
+
   const getAvailableRecipes = () => {
-    return RECIPES_DB.filter(recipe => {
+    const allRecipes = [
+      ...RECIPES_DB,
+      ...myLibraryFavorites,
+      ...customRecipes
+    ];
+    // deduplicate by id
+    const seen = new Set();
+    const unique = allRecipes.filter(r => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+    return unique.filter(recipe => {
+      if (!Array.isArray(recipe.ingredients)) return false;
       const availableIngredients = recipe.ingredients.filter(ingredient => {
-        const pantryItem = pantryItems.find(item => item.name === ingredient.name);
+        const pantryItem = findPantryItemForIngredient(ingredient.name);
         return pantryItem && pantryItem.quantity > 0;
       });
       return availableIngredients.length >= 2;
