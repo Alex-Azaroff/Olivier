@@ -1968,11 +1968,17 @@ const OlivierApp = () => {
     });
     return unique.filter(recipe => {
       if (!Array.isArray(recipe.ingredients)) return false;
-      const availableIngredients = recipe.ingredients.filter(ingredient => {
-        const pantryItem = findPantryItemForIngredient(ingredient.name);
-        return pantryItem && pantryItem.quantity > 0;
-      });
-      return availableIngredients.length >= 2;
+      const availableCount = recipe.ingredients.filter(ingredient => {
+        // точное совпадение (как в RecipeCard)
+        const exact = pantryItems.find(
+          item => item.name === ingredient.name && Number(item.quantity) > 0
+        );
+        if (exact) return true;
+        // нечёткое совпадение (для разных форм слов)
+        const fuzzy = findPantryItemForIngredient(ingredient.name);
+        return fuzzy && Number(fuzzy.quantity) > 0;
+      }).length;
+      return availableCount >= 2;
     });
   };
 
@@ -2229,46 +2235,68 @@ const OlivierApp = () => {
 
     const normalizeName = (s) => {
       try {
-        return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        return String(s).toLowerCase().normalize('NFC').replace(/[^а-яёa-z0-9]+/gi, ' ').trim();
       } catch (e) {
         return String(s).toLowerCase().trim();
       }
     };
 
-    let added = 0;
+    const itemsToAdd = [];
+
     recipe.ingredients.forEach(ingredient => {
       if (!ingredient || !ingredient.name) return;
       const status = getIngredientStatus(ingredient);
-      const needQuantity = status.status === 'missing' ? ingredient.amount : (status.status === 'partial' ? Math.max(0, ingredient.amount - (status.available || 0)) : 0);
+      const needQuantity = status.status === 'missing'
+        ? ingredient.amount
+        : status.status === 'partial'
+          ? Math.max(0, ingredient.amount - (status.available || 0))
+          : 0;
       if (needQuantity <= 0) return;
 
-      // robust product lookup by normalized name (exact or includes)
       const ingNameNorm = normalizeName(ingredient.name);
       let product = PRODUCTS_DB.find(p => normalizeName(p.name) === ingNameNorm);
       if (!product) {
-        product = PRODUCTS_DB.find(p => normalizeName(p.name).includes(ingNameNorm) || ingNameNorm.includes(normalizeName(p.name)));
+        product = PRODUCTS_DB.find(p => {
+          const pn = normalizeName(p.name);
+          return pn.includes(ingNameNorm) || ingNameNorm.includes(pn);
+        });
       }
 
-      if (product) {
-        // ensure quantity is a number
-        const qty = typeof needQuantity === 'number' ? needQuantity : parseFloat(needQuantity) || 0;
-        if (qty > 0) {
-          addToShopping(product, qty);
-          added++;
-        }
-      } else {
-        // fallback: create a minimal product object when not found
-        const fallback = { name: ingredient.name, measure: ingredient.measure || 'шт.' };
-        addToShopping(fallback, needQuantity);
-        added++;
-      }
+      const qty = parseFloat(needQuantity) || 1;
+      itemsToAdd.push({
+        id: Date.now() + Math.random(),
+        name: ingredient.name,
+        category: product?.category || '🏷️ Прочее',
+        measure: ingredient.measure || product?.measure || 'шт.',
+        quantity: qty,
+        completed: false,
+        addedAt: new Date(),
+        note: `для ${recipe.name}`
+      });
     });
 
-    if (added > 0) {
-      showNotification(`Добавлено ${added} ингредиентов в корзину`);
-    } else {
+    if (itemsToAdd.length === 0) {
       showNotification('Нет недостающих ингредиентов для добавления');
+      return;
     }
+
+    // Единое обновление корзины — без stale closure
+    setShoppingItems(prev => {
+      let updated = [...prev];
+      itemsToAdd.forEach(newItem => {
+        const existing = updated.find(i => i.name === newItem.name && !i.completed);
+        if (existing) {
+          updated = updated.map(i =>
+            i.id === existing.id ? { ...i, quantity: i.quantity + newItem.quantity } : i
+          );
+        } else {
+          updated.push(newItem);
+        }
+      });
+      return updated;
+    });
+
+    showNotification(`Добавлено ${itemsToAdd.length} ингредиентов в корзину`);
   };
 
   const hasExpiredItems = pantryItems.some(item => item.expiryDate < new Date());
@@ -3233,7 +3261,18 @@ const OlivierApp = () => {
             <div>
               {/* Возможные рецепты */}
               <div className="mb-6">
-                <h2 className="text-xl font-bold mb-4">Возможные рецепты</h2>
+                {(() => {
+                  const available = getAvailableRecipes();
+                  // eslint-disable-next-line no-console
+                  console.log('[Возможные рецепты] pantryItems:', pantryItems.length, 'myLibraryFavorites:', myLibraryFavorites.length, 'customRecipes:', customRecipes.length, 'found:', available.length, available.map(r=>r.name));
+                  return null;
+                })()}
+                <h2 className="text-xl font-bold mb-4">
+                  Возможные рецепты
+                  <span className="text-sm font-normal text-gray-400 ml-2">
+                    (кладовая: {pantryItems.length} пр., каталог: {myLibraryFavorites.length} рец.)
+                  </span>
+                </h2>
                 {(() => {
                   const available = getAvailableRecipes();
                   if (available.length === 0) {
