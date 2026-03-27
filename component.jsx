@@ -4032,34 +4032,42 @@ const OlivierApp = () => {
               <h2 className="text-xl font-bold flex-1 mr-2">{selectedRecipe.name}</h2>
               <div className="flex items-center gap-1">
                 {/* Поделиться */}
-                {typeof selectedRecipe.id === 'string' && (
-                  <button
-                    type="button"
-                    title="Поделиться рецептом"
-                    className="p-2 rounded-xl text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
-                    onClick={() => {
-                      const link = `https://t.me/ZayKypi_Bot?startapp=recipe_${selectedRecipe.id}`;
-                      const text = `Посмотри мой рецепт: ${selectedRecipe.name}`;
-                      if (tg?.switchInlineQuery) {
-                        try {
-                          tg.switchInlineQuery(`recipe_${selectedRecipe.id}`, ['users', 'groups', 'channels']);
-                          return;
-                        } catch (_) { /* fallback */ }
-                      }
-                      if (tg?.openTelegramLink) {
-                        tg.openTelegramLink(
-                          `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
-                        );
-                      } else {
-                        navigator.clipboard?.writeText(link)
-                          .then(() => showNotification('Ссылка скопирована!'))
-                          .catch(() => showNotification(link));
-                      }
-                    }}
-                  >
-                    <Share2 size={20} />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  title="Поделиться рецептом"
+                  className="p-2 rounded-xl text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                  onClick={() => {
+                    const isSupabaseRecipe = typeof selectedRecipe.id === 'string';
+                    const link = isSupabaseRecipe
+                      ? `https://t.me/ZayKypi_Bot?startapp=recipe_${selectedRecipe.id}`
+                      : 'https://t.me/ZayKypi_Bot';
+                    const shortIngredients = (selectedRecipe.ingredients || [])
+                      .slice(0, 8)
+                      .map((ing) => `${ing.name} ${ing.amount}${ing.measure}`)
+                      .join(', ');
+                    const text = isSupabaseRecipe
+                      ? `Посмотри мой рецепт: ${selectedRecipe.name}`
+                      : `Рецепт: ${selectedRecipe.name}${shortIngredients ? `\nИнгредиенты: ${shortIngredients}` : ''}`;
+
+                    if (isSupabaseRecipe && tg?.switchInlineQuery) {
+                      try {
+                        tg.switchInlineQuery(`recipe_${selectedRecipe.id}`, ['users', 'groups', 'channels']);
+                        return;
+                      } catch (_) { /* fallback */ }
+                    }
+                    if (tg?.openTelegramLink) {
+                      tg.openTelegramLink(
+                        `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
+                      );
+                    } else {
+                      navigator.clipboard?.writeText(`${text}\n${link}`)
+                        .then(() => showNotification('Рецепт скопирован для отправки'))
+                        .catch(() => showNotification(link));
+                    }
+                  }}
+                >
+                  <Share2 size={20} />
+                </button>
 
                 {/* Избранное */}
                 <button
