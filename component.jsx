@@ -812,6 +812,7 @@ const OlivierApp = () => {
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState(''); // баркод, привязанный к текущей форме
+  const [barcodeScanTarget, setBarcodeScanTarget] = useState('form');
 
   const [showAddMealModal, setShowAddMealModal] = useState(false);
   const [mealFormData, setMealFormData] = useState({
@@ -1496,11 +1497,23 @@ const OlivierApp = () => {
 
   /** Запрос к Open Food Facts по штрихкоду */
   /** Применяет найденный продукт к форме добавления */
-  const applyBarcodeResult = (data, sourceLabel) => {
+  const applyBarcodeResult = (data, sourceLabel, target = 'form') => {
     const fullName = data.name && data.brand &&
       !data.name.toLowerCase().includes(data.brand.toLowerCase())
       ? `${data.name} (${data.brand})`
       : data.name || '';
+
+    if (target === 'shopping') {
+      const productForShopping = {
+        name: fullName || data.name || 'Неизвестный товар',
+        category: data.category || '🏷️ Прочее',
+        measure: data.measure || 'шт.'
+      };
+      const qty = Number(data.quantity) > 0 ? Number(data.quantity) : 1;
+      addToShopping(productForShopping, qty);
+      return;
+    }
+
     setAddFormData(prev => ({
       ...prev,
       name:      fullName || prev.name,
@@ -1533,7 +1546,7 @@ const OlivierApp = () => {
    * 4. EAN-DB (через /api/barcode — ключ на сервере)
    * 5. Ручной ввод
    */
-  const fetchByBarcode = async (code) => {
+  const fetchByBarcode = async (code, target = 'form') => {
     setBarcodeLoading(true);
     setPendingBarcode(code); // запоминаем баркод сразу — пригодится при ручном вводе
     try {
@@ -1549,7 +1562,7 @@ const OlivierApp = () => {
             const label = data.source === 'manual'
               ? '👥 Из базы пользователей'
               : '📦 Из кэша';
-            applyBarcodeResult(data, label);
+            applyBarcodeResult(data, label, target);
             return;
           }
         } catch { /* продолжаем каскад */ }
@@ -1573,7 +1586,7 @@ const OlivierApp = () => {
             if (name || brand) {
               const result = { barcode: code, name, brand, category, measure, quantity, image_url, source: 'off' };
               saveToBarcodeCache(result);
-              applyBarcodeResult(result, '🌍 Open Food Facts');
+              applyBarcodeResult(result, '🌍 Open Food Facts', target);
               return;
             }
           }
@@ -1600,7 +1613,7 @@ const OlivierApp = () => {
               source:    'upcitemdb'
             };
             saveToBarcodeCache(result);
-            applyBarcodeResult(result, '🔍 UPC Item DB');
+            applyBarcodeResult(result, '🔍 UPC Item DB', target);
             return;
           }
         }
@@ -1623,7 +1636,7 @@ const OlivierApp = () => {
               source:    'eandb'
             };
             saveToBarcodeCache(result);
-            applyBarcodeResult(result, '📗 EAN-DB');
+            applyBarcodeResult(result, '📗 EAN-DB', target);
             return;
           }
         }
@@ -1631,6 +1644,9 @@ const OlivierApp = () => {
 
       // ── 5. Не найден ──────────────────────────────────────────────────────
       showNotification('Штрихкод не найден — введите данные вручную');
+      if (target === 'shopping') {
+        setShowAddModal(true);
+      }
 
     } finally {
       setBarcodeLoading(false);
@@ -1638,15 +1654,20 @@ const OlivierApp = () => {
   };
 
   /** Открывает встроенный сканер штрихкодов (ZXing, поддерживает EAN-13/UPC/QR) */
-  const handleBarcodeScan = () => {
+  const handleBarcodeScan = (target = 'form') => {
+    setBarcodeScanTarget(target);
     setShowBarcodeScanner(true);
   };
 
   const handleBarcodeDetected = useCallback((code) => {
     setShowBarcodeScanner(false);
+    if (barcodeScanTarget === 'shopping') {
+      fetchByBarcode(code.trim(), 'shopping');
+      return;
+    }
     setShowAddModal(true); // открываем форму добавления (если ещё не открыта)
-    fetchByBarcode(code.trim());
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchByBarcode(code.trim(), 'form');
+  }, [barcodeScanTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToPantry = (product, quantity = 1, expiryDate = null) => {
     const existingItem = pantryItems.find(item => item.name === product.name);
@@ -3452,9 +3473,9 @@ const OlivierApp = () => {
             <Plus size={24} />
           </button>
 
-          {currentTab === 'pantry' && pantrySubTab === 'products' && (
+          {((currentTab === 'pantry' && pantrySubTab === 'products') || currentTab === 'shopping') && (
             <button
-              onClick={() => setShowBarcodeScanner(true)}
+              onClick={() => handleBarcodeScan(currentTab === 'shopping' ? 'shopping' : 'form')}
               className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
               title="Сканировать штрихкод"
             >
