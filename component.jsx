@@ -1922,9 +1922,37 @@ const OlivierApp = () => {
   }, [currentTab, loadMyLibraryFavorites]);
 
   // Функции для работы с рецептами
+  // Таблица синонимов — ключ: нормализованное название из рецепта, значение: нормализованные синонимы из кладовой
+  const INGREDIENT_SYNONYMS = {
+    'цукини': ['кабачки', 'кабачок'],
+    'кабачки': ['цукини', 'кабачок'],
+    'кабачок': ['цукини', 'кабачки'],
+    'бобы эдамаме': ['эдамаме', 'эдам', 'соевые бобы'],
+    'эдамаме': ['бобы эдамаме', 'эдам', 'соевые бобы'],
+    'апельсиновый фреш': ['апельсиновый сок', 'апельсины', 'апельсин'],
+    'жареные тыквенные семечки': ['семечки', 'тыквенные семечки', 'семечки тыквенные'],
+    'тыквенные семечки': ['семечки', 'жареные тыквенные семечки'],
+    'мед': ['мед цветочный', 'мед натуральный', 'мёд', 'мед гречишный'],
+    'оливковое масло': ['оливковое масло ev', 'масло оливковое', 'extra virgin olive oil'],
+    'огурцы свежие': ['огурцы'],
+    'томаты': ['помидоры', 'томат'],
+    'помидоры': ['томаты', 'томат'],
+    'лук': ['лук репчатый', 'лук белый'],
+    'лук репчатый': ['лук', 'лук белый'],
+    'чеснок': ['чеснок свежий'],
+    'молоко': ['молоко пастеризованное', 'молоко ультрапастеризованное'],
+    'масло сливочное': ['масло сливочное 82.5%', 'масло сливочное 72%'],
+    'пармезан': ['пармезано реджано', 'сыр пармезан'],
+  };
+
   const normalizeIngredientName = (s) => {
     try {
-      return String(s).toLowerCase().normalize('NFC').replace(/[^а-яёa-z0-9]+/gi, ' ').trim();
+      return String(s)
+        .toLowerCase()
+        .normalize('NFC')
+        .replace(/ё/g, 'е')   // ё и е считаем одинаковыми
+        .replace(/[^а-яa-z0-9]+/gi, ' ')
+        .trim();
     } catch {
       return String(s).toLowerCase().trim();
     }
@@ -1934,14 +1962,19 @@ const OlivierApp = () => {
     const norm = normalizeIngredientName(ingredientName);
     const ingWords = norm.split(' ').filter(w => w.length >= 3);
 
-    return pantryItems.find(item => {
+    const match = pantryItems.find(item => {
       const itemNorm = normalizeIngredientName(item.name);
-      // 1. Точное совпадение
+      // 1. Точное совпадение нормализованных строк
       if (itemNorm === norm) return true;
-      // 2. Одна строка содержит другую целиком
-      if (itemNorm.includes(norm) || norm.includes(itemNorm)) return true;
-      // 3. Пересечение слов с учётом русской морфологии:
-      //    слова считаются одинаковыми если совпадают первые 4+ символа
+      // 2. Одна строка содержит другую (только если короткая строка >= 4 символов)
+      const minLen = Math.min(itemNorm.length, norm.length);
+      if (minLen >= 4 && (itemNorm.includes(norm) || norm.includes(itemNorm))) return true;
+      // 3. Синонимы
+      const synonyms = INGREDIENT_SYNONYMS[norm] || [];
+      if (synonyms.includes(itemNorm)) return true;
+      const reverseSynonyms = INGREDIENT_SYNONYMS[itemNorm] || [];
+      if (reverseSynonyms.includes(norm)) return true;
+      // 4. Пересечение слов с учётом морфологии (4+ символьный префикс)
       const pantryWords = itemNorm.split(' ').filter(w => w.length >= 3);
       return ingWords.some(iw =>
         pantryWords.some(pw => {
@@ -1951,6 +1984,7 @@ const OlivierApp = () => {
         })
       );
     });
+    return match;
   };
 
   const getAvailableRecipes = () => {

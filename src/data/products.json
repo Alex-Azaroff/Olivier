@@ -3295,6 +3295,54 @@
       "category": "🥫 Консервы",
       "measure": "кг.",
       "shelfLife": 365
+    },
+    {
+      "name": "Цукини",
+      "category": "🥦 Овощи",
+      "measure": "шт.",
+      "shelfLife": 7
+    },
+    {
+      "name": "Мёд",
+      "category": "🧂 Специи и соусы",
+      "measure": "г.",
+      "shelfLife": 730
+    },
+    {
+      "name": "Бобы эдамаме",
+      "category": "🥦 Овощи",
+      "measure": "г.",
+      "shelfLife": 5
+    },
+    {
+      "name": "Эдамаме",
+      "category": "🥦 Овощи",
+      "measure": "г.",
+      "shelfLife": 5
+    },
+    {
+      "name": "Апельсиновый фреш",
+      "category": "🥤 Напитки",
+      "measure": "мл.",
+      "shelfLife": 2
+    },
+    {
+      "name": "Жареные тыквенные семечки",
+      "category": "🌾 Орехи и сухофрукты",
+      "measure": "г.",
+      "shelfLife": 180
+    },
+    {
+      "name": "Тыквенные семечки",
+      "category": "🌾 Орехи и сухофрукты",
+      "measure": "г.",
+      "shelfLife": 180
+    },
+    {
+      "name": "Огурцы свежие",
+      "category": "🥦 Овощи",
+      "measure": "шт.",
+      "shelfLife": 7
     }
   ]
 }
