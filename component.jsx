@@ -3744,12 +3744,25 @@ const OlivierApp = () => {
                     {filtered.map((r) => {
                       const isFav = libraryFavoriteIds.has(r.id);
                       return (
-                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
-                          <div className="flex items-start justify-between gap-3">
+                        <div key={r.id} className="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+                          <div className="flex items-center gap-3">
+                            {/* Картинка */}
+                            <div className="w-14 h-14 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden">
+                              {r.image ? (
+                                <img
+                                  src={r.image}
+                                  alt={r.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-300 text-2xl">🍽️</div>
+                              )}
+                            </div>
+
+                            {/* Название и теги */}
                             <button
-                              className="flex-1 text-left"
+                              className="flex-1 text-left min-w-0"
                               onClick={() => {
-                                // Приводим к формату Recipe Modal
                                 const normalized = {
                                   id: r.id,
                                   name: r.name,
@@ -3765,17 +3778,22 @@ const OlivierApp = () => {
                                 setShowRecipeModal(true);
                               }}
                             >
-                              <div className="font-semibold text-gray-900">{r.name}</div>
+                              <div className="font-semibold text-gray-900 truncate">{r.name}</div>
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {r.difficulty && `${r.difficulty}`}{r.time ? ` • ${r.time} мин` : ''}
+                              </div>
                               {Array.isArray(r.tags) && r.tags.length > 0 && (
-                                <div className="text-xs text-gray-500 mt-1">
-                                  {r.tags.slice(0, 6).join(' • ')}
+                                <div className="text-xs text-gray-400 mt-0.5 truncate">
+                                  {r.tags.slice(0, 4).join(' • ')}
                                 </div>
                               )}
                             </button>
+
+                            {/* Сердечко */}
                             <button
                               type="button"
                               onClick={() => toggleLibraryFavorite(r)}
-                              className={`p-2 rounded-xl transition-colors ${isFav ? 'text-red-500 bg-red-50' : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'}`}
+                              className={`p-2 rounded-xl transition-colors flex-shrink-0 ${isFav ? 'text-red-500 bg-red-50' : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'}`}
                               title={isFav ? 'Убрать из избранного' : 'В избранное'}
                             >
                               <Heart size={18} fill={isFav ? 'currentColor' : 'none'} />
