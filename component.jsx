@@ -1448,8 +1448,6 @@ const OlivierApp = () => {
           return;
         }
 
-        await supabase.from('fridge_groups').delete().eq('id', oldFid);
-
         setSharedFridgeId(newId);
         setSharedInviteCode(code);
         setFridgeDisplayName(displayName);
@@ -1493,13 +1491,6 @@ const OlivierApp = () => {
           showNotification('Сначала выйдите из текущей общей кладовой');
           return;
         }
-        const invCheck = await fetchPantryInventory(existing.fridge_id);
-        if (invCheck.length > 0) {
-          showNotification('Очистите личную кладовую или создайте семью через «Создать приглашение»');
-          return;
-        }
-        await supabase.from('fridge_members').delete().eq('telegram_user_id', telegramUserId);
-        await supabase.from('fridge_groups').delete().eq('id', existing.fridge_id);
       }
       const { data: group, error: gErr } = await supabase
         .from('fridge_groups')
@@ -1510,10 +1501,15 @@ const OlivierApp = () => {
         showNotification('Код не найден');
         return;
       }
-      const { error: mErr } = await supabase.from('fridge_members').insert({
-        fridge_id: group.id,
-        telegram_user_id: telegramUserId
-      });
+      const { error: mErr } = existing?.fridge_id
+        ? await supabase
+            .from('fridge_members')
+            .update({ fridge_id: group.id })
+            .eq('telegram_user_id', telegramUserId)
+        : await supabase.from('fridge_members').insert({
+            fridge_id: group.id,
+            telegram_user_id: telegramUserId
+          });
       if (mErr) {
         showNotification('Не удалось присоединиться');
         return;
@@ -1560,7 +1556,7 @@ const OlivierApp = () => {
       setShowShareModal(false);
       return;
     }
-    if (!window.confirm('Покинуть семейную кладовую? У вас будет новая пустая личная кладовая.')) {
+    if (!window.confirm('Покинуть семейную кладовую и вернуться в личную?')) {
       return;
     }
     setShareBusy(true);
@@ -1603,8 +1599,27 @@ const OlivierApp = () => {
         }
       }
 
-      const personalGrp = await ensurePersonalFridge();
+      let personalGrp = null;
+      const { data: personalRows } = await supabase
+        .from('fridge_groups')
+        .select('id, invite_code, name, is_personal')
+        .eq('created_by_telegram_id', telegramUserId)
+        .eq('is_personal', true)
+        .limit(1);
+      if (Array.isArray(personalRows) && personalRows.length > 0) {
+        personalGrp = personalRows[0];
+      } else {
+        personalGrp = await ensurePersonalFridge();
+      }
       if (personalGrp?.id) {
+        const { error: mBackErr } = await supabase.from('fridge_members').insert({
+          fridge_id: personalGrp.id,
+          telegram_user_id: telegramUserId
+        });
+        if (mBackErr) {
+          showNotification('Не удалось вернуться в личную кладовую');
+          return;
+        }
         setSharedFridgeId(personalGrp.id);
         setSharedInviteCode(personalGrp.invite_code || null);
         setFridgeDisplayName(personalGrp.name || 'Личная кладовая');
