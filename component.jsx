@@ -2826,7 +2826,7 @@ const OlivierApp = () => {
                             className="text-xs bg-orange-100 text-orange-600 hover:bg-orange-200 active:bg-orange-300 rounded-full px-2 py-1 transition-colors font-semibold leading-tight"
                             title="Съесть одну порцию"
                           >
-                            🫦&nbsp;Кусь
+                            🫦&nbsp;Кусь!
                           </button>
                           <button
                             onClick={() => addPantryItemToCart(item)}
@@ -2982,7 +2982,7 @@ const OlivierApp = () => {
                               className="text-xs bg-orange-100 text-orange-600 hover:bg-orange-200 active:bg-orange-300 rounded-full px-2 py-1 transition-colors font-semibold leading-tight"
                               title="Съесть одну порцию"
                             >
-                              🫦&nbsp;Кусь
+                              🫦&nbsp;Кусь!
                             </button>
                             <button
                               onClick={() => toggleFavoriteMeal(meal)}

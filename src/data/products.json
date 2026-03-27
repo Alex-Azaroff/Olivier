@@ -3195,18 +3195,6 @@
       "shelfLife": 365
     },
     {
-      "name": "Томаты в собственном соку",
-      "category": "🥫 Консервы",
-      "measure": "кг.",
-      "shelfLife": 730
-    },
-    {
-      "name": "Томатная паста",
-      "category": "🥫 Консервы",
-      "measure": "кг.",
-      "shelfLife": 365
-    },
-    {
       "name": "Горошек зеленый консервированный",
       "category": "🥫 Консервы",
       "measure": "кг.",
@@ -3297,52 +3285,34 @@
       "shelfLife": 365
     },
     {
+      "name": "Бобы эдамаме",
+      "category": "🫘 Бобовые",
+      "measure": "г.",
+      "shelfLife": 3
+    },
+    {
       "name": "Цукини",
       "category": "🥦 Овощи",
-      "measure": "шт.",
-      "shelfLife": 7
+      "measure": "кг.",
+      "shelfLife": 10
     },
     {
-      "name": "Мёд",
-      "category": "🧂 Специи и соусы",
+      "name": "Семечки тыквенные жареные",
+      "category": "🍿 Снеки",
       "measure": "г.",
-      "shelfLife": 730
-    },
-    {
-      "name": "Бобы эдамаме",
-      "category": "🥦 Овощи",
-      "measure": "г.",
-      "shelfLife": 5
-    },
-    {
-      "name": "Эдамаме",
-      "category": "🥦 Овощи",
-      "measure": "г.",
-      "shelfLife": 5
+      "shelfLife": 60
     },
     {
       "name": "Апельсиновый фреш",
-      "category": "🥤 Напитки",
-      "measure": "мл.",
-      "shelfLife": 2
+      "category": "🧃 Соки",
+      "measure": "л.",
+      "shelfLife": 1
     },
     {
-      "name": "Жареные тыквенные семечки",
-      "category": "🌾 Орехи и сухофрукты",
-      "measure": "г.",
-      "shelfLife": 180
-    },
-    {
-      "name": "Тыквенные семечки",
-      "category": "🌾 Орехи и сухофрукты",
-      "measure": "г.",
-      "shelfLife": 180
-    },
-    {
-      "name": "Огурцы свежие",
-      "category": "🥦 Овощи",
+      "name": "Кофе в капсулах",
+      "category": "☕ Кофе",
       "measure": "шт.",
-      "shelfLife": 7
+      "shelfLife": 365
     }
   ]
 }
