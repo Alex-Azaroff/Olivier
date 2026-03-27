@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Heart, Home, Book, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, FileText, Share2, ScanLine, Loader2 } from 'lucide-react';
+import { BrowserMultiFormatReader } from '@zxing/browser';
+import { NotFoundException } from '@zxing/library';
 import { supabase } from './src/supabaseClient';
 import { RECIPES_DB } from './src/data/recipes';
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
@@ -113,12 +115,105 @@ const adjustQuantity = (currentQuantity, measure, increment) => {
   }
 };
 
+// Порция по умолчанию для единицы измерения (если у продукта нет явного поля portion)
+const getDefaultPortion = (measure) => {
+  const m = normalizeMeasure(measure);
+  if (m === 'шт.')     return 1;
+  if (m === 'г.')      return 50;
+  if (m === 'кг.')     return 0.1;
+  if (m === 'мл.')     return 200;
+  if (m === 'л.')      return 0.2;
+  if (m === 'мг.')     return 1000;
+  if (m === 'ч.л.')    return 1;
+  if (m === 'ст.л.')   return 1;
+  if (m === 'стакан.') return 1;
+  return 1;
+};
+
 
 // Компонент для поля с автозаполнением
+/**
+ * Модальный оверлей со сканером штрихкодов (ZXing, поддерживает EAN-13/UPC/QR).
+ * @param {{ onDetected: (code: string) => void, onClose: () => void }} props
+ */
+const BarcodeScannerModal = ({ onDetected, onClose }) => {
+  const videoRef = useRef(null);
+  const readerRef = useRef(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const reader = new BrowserMultiFormatReader();
+    readerRef.current = reader;
+    let stopped = false;
+
+    reader.decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      videoRef.current,
+      (result, err) => {
+        if (stopped) return;
+        if (result) {
+          stopped = true;
+          try { reader.reset(); } catch {}
+          onDetected(result.getText());
+        } else if (err && !(err instanceof NotFoundException)) {
+          setError('Нет доступа к камере. Разрешите доступ и попробуйте снова.');
+        }
+      }
+    ).catch(() => {
+      setError('Нет доступа к камере. Разрешите доступ и попробуйте снова.');
+    });
+
+    return () => {
+      stopped = true;
+      try { reader.reset(); } catch {}
+    };
+  }, [onDetected]);
+
+  return (
+    <div className="fixed inset-0 bg-black flex flex-col z-[80]">
+      {/* Заголовок */}
+      <div className="flex items-center justify-between px-4 py-3 bg-black bg-opacity-70">
+        <span className="text-white font-semibold text-sm">Наведите камеру на штрихкод</span>
+        <button onClick={onClose} className="text-white p-1">
+          <X size={24} />
+        </button>
+      </div>
+
+      {/* Видео */}
+      <div className="relative flex-1 flex items-center justify-center overflow-hidden">
+        <video ref={videoRef} className="w-full h-full object-cover" />
+        {/* Прицел */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-64 h-40 border-2 border-white rounded-xl opacity-80" />
+        </div>
+      </div>
+
+      {/* Ошибка */}
+      {error && (
+        <div className="px-4 py-3 bg-red-600 text-white text-sm text-center">{error}</div>
+      )}
+      <div className="px-4 py-3 bg-black bg-opacity-70 text-center">
+        <span className="text-gray-300 text-xs">EAN-13 · UPC · QR</span>
+      </div>
+    </div>
+  );
+};
+
 const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const containerRef = useRef(null);
   const safeProducts = Array.isArray(products) ? products : [];
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const normalizeForSearch = (s) => {
     if (!s && s !== 0) return '';
     try {
@@ -172,7 +267,7 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <input
         type="text"
         placeholder={placeholder}
@@ -183,7 +278,7 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
       />
       
       {showSuggestions && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 max-h-[220px] overflow-y-auto">
           {suggestions.map(product => (
             <button
               key={product.name}
@@ -617,12 +712,15 @@ const OlivierApp = () => {
     expiryDate: '',
     autoFilled: false
   });
-  const [barcodeLookupLoading, setBarcodeLookupLoading] = useState(false);
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState(''); // баркод, привязанный к текущей форме
 
   const [editFormData, setEditFormData] = useState({
     name: '',
     quantity: 1,
     measure: '',
+    category: '',
     expiryDate: ''
   });
 
@@ -635,7 +733,6 @@ const OlivierApp = () => {
     comments: '',
     image: ''
   });
-
 
   const createDefaultPantryItems = () => {
     const now = Date.now();
@@ -1126,6 +1223,36 @@ const OlivierApp = () => {
     setShowDateModal(true);
   };
 
+  const handleKus = (item) => {
+    const catalogProduct = PRODUCTS_DB.find(
+      p => p.name.toLowerCase() === item.name.toLowerCase()
+    );
+
+    let portion, portionMeasure;
+    if (catalogProduct && catalogProduct.portion != null) {
+      portion = catalogProduct.portion;
+      portionMeasure = catalogProduct.measure;
+    } else {
+      portion = getDefaultPortion(item.measure);
+      portionMeasure = item.measure;
+    }
+
+    // Конвертируем порцию в единицу измерения, которая хранится у элемента в кладовой
+    const portionInItemMeasure = convertQuantity(portion, portionMeasure, item.measure);
+    const step = getQuantityStep(item.measure);
+    const newQty = roundToStep(Number(item.quantity) - portionInItemMeasure, step);
+
+    if (newQty <= 0) {
+      setPantryItems(prev => prev.filter(p => p.id !== item.id));
+      showNotification(`${item.name} закончился 🪹`);
+    } else {
+      setPantryItems(prev =>
+        prev.map(p => p.id === item.id ? { ...p, quantity: newQty } : p)
+      );
+      showNotification(`Кусь! −${formatQuantityForDisplay(portionInItemMeasure, item.measure)} ${item.measure} ${item.name}`);
+    }
+  };
+
   const updateExpiryDate = (newDate) => {
     if (editingDateProduct && newDate) {
       setPantryItems(prevItems =>
@@ -1151,118 +1278,206 @@ const OlivierApp = () => {
     }));
   };
 
+  /**
+   * Парсит строку количества из Open Food Facts (напр. "500 g", "1 l", "250 мл")
+   * и возвращает { quantity: number, measure: string }
+   * @param {string|undefined} qStr
+   */
   const parseOFFQuantity = (qStr) => {
     if (!qStr) return { quantity: 1, measure: 'шт.' };
-    const s = String(qStr).toLowerCase().trim();
+    const s = qStr.toLowerCase().trim();
     let measure = 'шт.';
-    if (/кг|kg/.test(s)) measure = 'кг.';
-    else if (/мл|ml/.test(s)) measure = 'мл.';
-    else if (/\d\s*г\b|\d\s*g\b/.test(s)) measure = 'г.';
-    else if (/\bл\b|\bl\b/.test(s)) measure = 'л.';
+    if (/кг|kg/.test(s))                          measure = 'кг.';
+    else if (/мл|ml/.test(s))                     measure = 'мл.';
+    else if (/\d\s*г\b|\d\s*g\b/.test(s))         measure = 'г.';
+    else if (/\bл\b|\bl\b/.test(s))               measure = 'л.';
     const numMatch = s.match(/(\d+[.,]?\d*)/);
     const quantity = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : 1;
     return { quantity: isFinite(quantity) && quantity > 0 ? quantity : 1, measure };
   };
 
+  /**
+   * Грубое сопоставление тегов категорий Open Food Facts с нашими категориями
+   * @param {string[]|undefined} tags
+   */
   const mapOFFCategory = (tags) => {
     if (!Array.isArray(tags)) return '🏷️ Прочее';
     const t = tags.join(' ').toLowerCase();
-    if (/milk|dairy|lait/.test(t)) return '🥛 Молочные';
-    if (/yogurt|kefir|ferment/.test(t)) return '🥛 Кисломолочные';
-    if (/cheese/.test(t)) return '🧀 Сыры твердые';
-    if (/butter|margarine/.test(t)) return '🧈 Масло';
-    if (/egg/.test(t)) return '🥚 Яйца';
-    if (/meat|beef|pork|chicken/.test(t)) return '🥩 Мясо';
-    if (/fish|seafood/.test(t)) return '🐟 Рыба свежая';
-    if (/vegetable|овощ/.test(t)) return '🥦 Овощи';
-    if (/fruit|фрукт/.test(t)) return '🍎 Фрукты';
-    if (/bread|выпечка/.test(t)) return '🍞 Хлеб';
-    if (/pasta|макарон/.test(t)) return '🍝 Макароны';
-    if (/cereal|grain|крупа/.test(t)) return '🌾 Крупы';
-    if (/sauce|кетчуп|соус/.test(t)) return '🍯 Соусы';
-    if (/coffee|кофе/.test(t)) return '☕ Кофе';
-    if (/tea|чай/.test(t)) return '☕ Чай';
+    if (/milk|dairy|lait/.test(t))          return '🥛 Молочные';
+    if (/yogurt|kefir|ferment/.test(t))     return '🥛 Кисломолочные';
+    if (/cheese/.test(t))                   return '🧀 Сыры твердые';
+    if (/butter|margarine/.test(t))         return '🧈 Масло';
+    if (/egg/.test(t))                      return '🥚 Яйца';
+    if (/meat|beef|pork|chicken/.test(t))   return '🥩 Мясо';
+    if (/fish|seafood/.test(t))             return '🐟 Рыба свежая';
+    if (/vegetable|овощ/.test(t))           return '🥦 Овощи';
+    if (/fruit|фрукт/.test(t))              return '🍎 Фрукты';
+    if (/bread|выпечка/.test(t))            return '🍞 Хлеб';
+    if (/pasta|макарон/.test(t))            return '🍝 Макароны';
+    if (/cereal|grain|крупа/.test(t))       return '🌾 Крупы';
+    if (/sauce|кетчуп|соус/.test(t))        return '🍯 Соусы';
+    if (/water|вода/.test(t))               return '💧 Вода';
+    if (/juice|сок/.test(t))               return '🧃 Соки';
+    if (/chocolate|candy|sweet/.test(t))    return '🍫 Сладости';
+    if (/snack|chips|снек/.test(t))         return '🍿 Снеки';
+    if (/coffee|кофе/.test(t))              return '☕ Кофе';
+    if (/tea|чай/.test(t))                  return '☕ Чай';
     return '🏷️ Прочее';
   };
 
-  const processBarcodeToShopping = async (codeRaw) => {
-    const code = String(codeRaw || '').trim();
-    if (!code) return;
+  /** Запрос к Open Food Facts по штрихкоду */
+  /** Применяет найденный продукт к форме добавления */
+  const applyBarcodeResult = (data, sourceLabel) => {
+    const fullName = data.name && data.brand &&
+      !data.name.toLowerCase().includes(data.brand.toLowerCase())
+      ? `${data.name} (${data.brand})`
+      : data.name || '';
+    setAddFormData(prev => ({
+      ...prev,
+      name:      fullName || prev.name,
+      measure:   data.measure   || prev.measure,
+      quantity:  data.quantity  || prev.quantity,
+      category:  data.category  || prev.category,
+      autoFilled: !!fullName
+    }));
+    showNotification(fullName
+      ? `${sourceLabel}: ${fullName}`
+      : `${sourceLabel} — уточните название`);
+  };
 
-    // 1) Пробуем локальный каталог
-    const fromLocal = PRODUCTS_DB.find((p) => String(p?.barcode || '').trim() === code);
-    if (fromLocal) {
-      addToShopping(fromLocal, 1);
-      setShowAddModal(false);
-      return;
-    }
-
-    // 2) Open Food Facts
+  /** Сохраняет продукт в Supabase products_cache (тихо, без блокировки) */
+  const saveToBarcodeCache = async (data) => {
+    if (!supabase) return;
     try {
-      const res = await fetch(
-        `https://world.openfoodfacts.org/api/v2/product/${code}` +
-        `?fields=product_name,product_name_ru,brands,quantity,categories_tags`
+      await supabase.from('products_cache').upsert(
+        { ...data, updated_at: new Date().toISOString() },
+        { onConflict: 'barcode' }
       );
-      if (res.ok) {
-        const json = await res.json();
-        if (json.status === 1 && json.product) {
-          const p = json.product;
-          const name = (p.product_name_ru || p.product_name || '').trim();
-          const { quantity, measure } = parseOFFQuantity(p.quantity);
-          if (name) {
-            addToShopping({
-              name,
-              category: mapOFFCategory(p.categories_tags),
-              measure,
-              shelfLife: 7
-            }, quantity);
-            setShowAddModal(false);
+    } catch { /* кэширование некритично */ }
+  };
+
+  /**
+   * Каскадный поиск продукта по штрихкоду:
+   * 1. Supabase products_cache
+   * 2. Open Food Facts
+   * 3. UPC Item DB (бесплатный fallback)
+   * 4. EAN-DB (через /api/barcode — ключ на сервере)
+   * 5. Ручной ввод
+   */
+  const fetchByBarcode = async (code) => {
+    setBarcodeLoading(true);
+    setPendingBarcode(code); // запоминаем баркод сразу — пригодится при ручном вводе
+    try {
+      // ── 1. Supabase cache ──────────────────────────────────────────────────
+      if (supabase) {
+        try {
+          const { data } = await supabase
+            .from('products_cache')
+            .select('name,brand,category,measure,quantity,image_url,source')
+            .eq('barcode', code)
+            .maybeSingle();
+          if (data?.name) {
+            const label = data.source === 'manual'
+              ? '👥 Из базы пользователей'
+              : '📦 Из кэша';
+            applyBarcodeResult(data, label);
+            return;
+          }
+        } catch { /* продолжаем каскад */ }
+      }
+
+      // ── 2. Open Food Facts ─────────────────────────────────────────────────
+      try {
+        const res = await fetch(
+          `https://world.openfoodfacts.org/api/v2/product/${code}` +
+          `?fields=product_name,product_name_ru,brands,quantity,categories_tags,image_front_url`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          if (json.status === 1 && json.product) {
+            const p = json.product;
+            const name  = (p.product_name_ru || p.product_name || '').trim();
+            const brand = (p.brands || '').split(',')[0].trim();
+            const { quantity, measure } = parseOFFQuantity(p.quantity);
+            const category  = mapOFFCategory(p.categories_tags);
+            const image_url = p.image_front_url || '';
+            if (name || brand) {
+              const result = { barcode: code, name, brand, category, measure, quantity, image_url, source: 'off' };
+              saveToBarcodeCache(result);
+              applyBarcodeResult(result, '🌍 Open Food Facts');
+              return;
+            }
+          }
+        }
+      } catch { /* продолжаем */ }
+
+      // ── 3. UPC Item DB (бесплатный, без ключа) ────────────────────────────
+      try {
+        const res = await fetch(
+          `https://api.upcitemdb.com/prod/trial/lookup?upc=${code}`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          const item = json.items?.[0];
+          if (item?.title) {
+            const result = {
+              barcode:   code,
+              name:      item.title,
+              brand:     item.brand || '',
+              category:  item.category || '',
+              measure:   'шт.',
+              quantity:  1,
+              image_url: item.images?.[0] || '',
+              source:    'upcitemdb'
+            };
+            saveToBarcodeCache(result);
+            applyBarcodeResult(result, '🔍 UPC Item DB');
             return;
           }
         }
-      }
-    } catch (e) {
-      // ignore and fallthrough
-    }
+      } catch { /* продолжаем */ }
 
-    showNotification('Штрихкод не найден. Добавьте товар вручную.');
-  };
-
-  const handleBarcodeScanToShopping = () => {
-    if (barcodeLookupLoading) return;
-    const tgWebApp = window.Telegram?.WebApp;
-    setBarcodeLookupLoading(true);
-
-    const done = () => setBarcodeLookupLoading(false);
-
-    if (tgWebApp?.showScanQrPopup) {
+      // ── 4. EAN-DB (через серверный прокси /api/barcode) ───────────────────
       try {
-        tgWebApp.showScanQrPopup(
-          { text: 'Наведите камеру на штрихкод' },
-          (text) => {
-            tgWebApp.closeScanQrPopup?.();
-            if (!text) {
-              done();
-              return;
-            }
-            processBarcodeToShopping(text).finally(done);
-            return true;
+        const res = await fetch(`/api/barcode?code=${code}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.found && json.name) {
+            const result = {
+              barcode:   code,
+              name:      json.name,
+              brand:     json.brand  || '',
+              category:  json.category || '',
+              measure:   'шт.',
+              quantity:  1,
+              image_url: json.image_url || '',
+              source:    'eandb'
+            };
+            saveToBarcodeCache(result);
+            applyBarcodeResult(result, '📗 EAN-DB');
+            return;
           }
-        );
-      } catch {
-        done();
-        showNotification('Не удалось открыть сканер');
-      }
-      return;
-    }
+        }
+      } catch { /* продолжаем */ }
 
-    const manual = window.prompt('Введите штрихкод');
-    if (!manual) {
-      done();
-      return;
+      // ── 5. Не найден ──────────────────────────────────────────────────────
+      showNotification('Штрихкод не найден — введите данные вручную');
+
+    } finally {
+      setBarcodeLoading(false);
     }
-    processBarcodeToShopping(manual).finally(done);
   };
+
+  /** Открывает встроенный сканер штрихкодов (ZXing, поддерживает EAN-13/UPC/QR) */
+  const handleBarcodeScan = () => {
+    setShowBarcodeScanner(true);
+  };
+
+  const handleBarcodeDetected = useCallback((code) => {
+    setShowBarcodeScanner(false);
+    setShowAddModal(true); // открываем форму добавления (если ещё не открыта)
+    fetchByBarcode(code.trim());
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToPantry = (product, quantity = 1, expiryDate = null) => {
     const existingItem = pantryItems.find(item => item.name === product.name);
@@ -1364,7 +1579,21 @@ const OlivierApp = () => {
       toggleFavoriteProduct(selectedProduct);
     }
 
+    // Если есть привязанный баркод — сохраняем продукт в кэш
+    if (pendingBarcode) {
+      saveToBarcodeCache({
+        barcode:  pendingBarcode,
+        name:     selectedProduct.name,
+        brand:    '',
+        category: selectedProduct.category || '🏷️ Прочее',
+        measure:  measureToStore,
+        quantity: qtyToStore,
+        source:   'manual'
+      });
+    }
+
     setShowAddModal(false);
+    setPendingBarcode('');
     setAddFormData({
       name: '',
       category: '',
@@ -1704,6 +1933,7 @@ const OlivierApp = () => {
   };
 
   const hasExpiredItems = pantryItems.some(item => item.expiryDate < new Date());
+  const [sortByExpiry, setSortByExpiry] = useState(false);
 
   // Функция для группировки продуктов по категориям
   const groupItemsByCategory = (items) => {
@@ -1802,6 +2032,19 @@ const OlivierApp = () => {
       )}
       {/* Top Bar */}
       <div className="bg-white shadow-sm p-4 pr-14 flex flex-col items-center justify-center relative gap-0.5">
+        {currentTab === 'pantry' && (
+          <button
+            type="button"
+            onClick={() => setSortByExpiry(prev => !prev)}
+            className={`absolute left-2 top-1/2 -translate-y-1/2 p-2.5 rounded-xl transition-colors ${
+              sortByExpiry ? 'text-orange-500 bg-orange-50' : 'text-gray-400 hover:bg-gray-50'
+            }`}
+            title={sortByExpiry ? 'Сортировка по сроку: вкл.' : 'Сортировать по сроку годности'}
+            aria-label="Сортировать по сроку годности"
+          >
+            <Calendar size={22} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setShowShareModal(true)}
@@ -1834,8 +2077,8 @@ const OlivierApp = () => {
       </div>
 
       {showShareModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]" onClick={() => setShowShareModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <h2 className="text-xl font-bold pr-8">Семейный холодильник</h2>
               <button
@@ -1947,119 +2190,144 @@ const OlivierApp = () => {
                 <div className="text-center text-gray-500 py-8">
                   Кладовая пуста. Добавьте продукты!
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  {Object.entries(groupItemsByCategory(pantryItems)).map(([category, items]) => (
-                    <div key={category}>
-                      <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                        {category}
-                      </h3>
-                      <div className="space-y-2">
-                        {items.map(item => {
-                          const expiryStatus = getExpiryStatus(item.expiryDate);
-                          return (
-                            <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm">
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      onClick={() => {
-                                          setEditingItem(item);
-                                          setEditFormData({
-                                            name: item.name,
-                                            quantity: item.quantity,
-                                            measure: item.measure,
-                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                          });
-                                          setShowEditModal(true);
-                                        }}
-                                      className="font-semibold text-gray-900 capitalize hover:text-blue-600 transition-colors"
-                                    >
-                                      {item.name}
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                          setEditingItem(item);
-                                          setEditFormData({
-                                            name: item.name,
-                                            quantity: item.quantity,
-                                            measure: item.measure,
-                                            expiryDate: item.expiryDate.toISOString().split('T')[0]
-                                          });
-                                          setShowEditModal(true);
-                                        }}
-                                      className="text-gray-400 hover:text-blue-600 transition-colors"
-                                    >
-                                      <Edit3 size={16} />
-                                    </button>
-                                  </div>
-                                  
-                                  <div className="text-sm mt-1">
-                                    <span className="text-gray-700">
-                                      {item.quantity} {item.measure}
-                                    </span>
-                                    <button
-                                      onClick={() => handleDateClick(item)}
-                                      className={`ml-3 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''} hover:underline cursor-pointer transition-all font-medium`}
-                                      title="Изменить срок годности"
-                                    >
-                                      до {item.expiryDate.toLocaleDateString('ru-RU')}
-                                    </button>
-                                    <span className={`ml-1 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''}`}>
-                                      ({expiryStatus.status === 'expired' 
-                                        ? `просрочено ${expiryStatus.days} дн.` 
-                                        : `${expiryStatus.days} дн.`})
-                                    </span>
-                                  </div>
-                                </div>
-                                
-                                <div className="flex items-center gap-2 ml-4">
-                                  <button
-                                    onClick={() => addPantryItemToCart(item)}
-                                    className="text-blue-500 hover:text-blue-700 transition-colors"
-                                    title="Добавить в покупки"
-                                  >
-                                    <ShoppingCart size={20} />
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      const product = {
-                                        name: item.name,
-                                        category: item.category,
-                                        measure: item.measure,
-                                        shelfLife: item.shelfLife || 7
-                                      };
-                                      toggleFavoriteProduct(product);
-                                    }}
-                                    className={`transition-colors ${
-                                      favoriteProducts.some(fav => fav.name === item.name) 
-                                        ? 'text-red-500 hover:text-red-700' 
-                                        : 'text-gray-400 hover:text-red-500'
-                                    }`}
-                                    title="Добавить в избранное"
-                                  >
-                                    <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setPantryItems(prev => prev.filter(p => p.id !== item.id));
-                                      showNotification(`${item.name} удален из кладовой`);
-                                    }}
-                                    className="text-red-500 hover:text-red-700 transition-colors"
-                                    title="Удалить продукт"
-                                  >
-                                    <Trash2 size={20} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
+              ) : (() => {
+                const renderItem = (item, showCategory = false) => {
+                  const expiryStatus = getExpiryStatus(item.expiryDate);
+                  return (
+                    <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setEditingItem(item);
+                                setEditFormData({
+                                  name: item.name,
+                                  quantity: item.quantity,
+                                  measure: item.measure,
+                                  expiryDate: item.expiryDate.toISOString().split('T')[0],
+                                  category: item.category || '🏷️ Прочее'
+                                });
+                                setShowEditModal(true);
+                              }}
+                              className="block max-w-full text-left text-sm font-semibold leading-snug text-gray-900 hover:text-blue-600 transition-colors"
+                            >
+                              {item.name}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingItem(item);
+                                setEditFormData({
+                                  name: item.name,
+                                  quantity: item.quantity,
+                                  measure: item.measure,
+                                  expiryDate: item.expiryDate.toISOString().split('T')[0],
+                                  category: item.category || '🏷️ Прочее'
+                                });
+                                setShowEditModal(true);
+                              }}
+                              className="text-gray-400 hover:text-blue-600 transition-colors"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                          </div>
+                          {showCategory && (
+                            <div className="text-xs text-gray-400 mt-0.5">{item.category || '🏷️ Прочее'}</div>
+                          )}
+                          <div className="text-sm mt-1">
+                            <span className="text-gray-700">
+                              {item.quantity} {item.measure}
+                            </span>
+                            <button
+                              onClick={() => handleDateClick(item)}
+                              className={`ml-3 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''} hover:underline cursor-pointer transition-all font-medium`}
+                              title="Изменить срок годности"
+                            >
+                              до {item.expiryDate.toLocaleDateString('ru-RU')}
+                            </button>
+                            <span className={`ml-1 ${expiryStatus.color} ${item.autoFilled ? 'italic' : ''}`}>
+                              ({expiryStatus.status === 'expired'
+                                ? `просрочено ${expiryStatus.days} дн.`
+                                : `${expiryStatus.days} дн.`})
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => handleKus(item)}
+                            className="text-xs bg-orange-100 text-orange-600 hover:bg-orange-200 active:bg-orange-300 rounded-full px-2 py-1 transition-colors font-semibold leading-tight"
+                            title="Съесть одну порцию"
+                          >
+                            🫦&nbsp;Кусь
+                          </button>
+                          <button
+                            onClick={() => addPantryItemToCart(item)}
+                            className="text-blue-500 hover:text-blue-700 transition-colors"
+                            title="Добавить в покупки"
+                          >
+                            <ShoppingCart size={20} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              const product = {
+                                name: item.name,
+                                category: item.category,
+                                measure: item.measure,
+                                shelfLife: item.shelfLife || 7
+                              };
+                              toggleFavoriteProduct(product);
+                            }}
+                            className={`transition-colors ${
+                              favoriteProducts.some(fav => fav.name === item.name)
+                                ? 'text-red-500 hover:text-red-700'
+                                : 'text-gray-400 hover:text-red-500'
+                            }`}
+                            title="Добавить в избранное"
+                          >
+                            <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setPantryItems(prev => prev.filter(p => p.id !== item.id));
+                              showNotification(`${item.name} удален из кладовой`);
+                            }}
+                            className="text-red-500 hover:text-red-700 transition-colors"
+                            title="Удалить продукт"
+                          >
+                            <Trash2 size={20} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                };
+
+                if (sortByExpiry) {
+                  const sorted = [...pantryItems].sort(
+                    (a, b) => new Date(a.expiryDate) - new Date(b.expiryDate)
+                  );
+                  return (
+                    <div className="space-y-2">
+                      {sorted.map(item => renderItem(item, true))}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-6">
+                    {Object.entries(groupItemsByCategory(pantryItems)).map(([category, items]) => (
+                      <div key={category}>
+                        <h3 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                          {category}
+                        </h3>
+                        <div className="space-y-2">
+                          {items.map(item => renderItem(item, false))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -2170,7 +2438,8 @@ const OlivierApp = () => {
                                 name: item.name,
                                 quantity: item.quantity,
                                 measure: item.measure,
-                                expiryDate: ''
+                                expiryDate: '',
+                                category: item.category || '🏷️ Прочее'
                               });
                               setShowEditModal(true);
                             }}
@@ -2400,12 +2669,21 @@ const OlivierApp = () => {
 
       {/* Floating Add Button */}
       {(currentTab === 'pantry' || currentTab === 'shopping' || currentTab === 'favorites') && (
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
-        >
-          <Plus size={24} />
-        </button>
+        <>
+          <button
+            onClick={() => setShowBarcodeScanner(true)}
+            className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
+            title="Сканировать штрихкод"
+          >
+            <ScanLine size={24} />
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
+          >
+            <Plus size={24} />
+          </button>
+        </>
       )}
 
       {/* Bottom Navigation */}
@@ -2454,8 +2732,8 @@ const OlivierApp = () => {
 
       {/* Add Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto overflow-x-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowAddModal(false); setPendingBarcode(''); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">
                 {currentTab === 'pantry' && 'Добавить в кладовую'}
@@ -2463,32 +2741,31 @@ const OlivierApp = () => {
                 {currentTab === 'favorites' && 'Добавить в избранное'}
                 {currentTab === 'recipes' && 'Добавить рецепт'}
               </h2>
-              <div className="flex items-center gap-2">
-                {currentTab === 'shopping' && (
-                  <button
-                    type="button"
-                    onClick={handleBarcodeScanToShopping}
-                    disabled={barcodeLookupLoading}
-                    className="text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
-                    title="Добавить в покупки по штрихкоду"
-                  >
-                    {barcodeLookupLoading ? <Loader2 size={20} className="animate-spin" /> : <ScanLine size={20} />}
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="text-gray-500"
-                >
-                  <X size={24} />
-                </button>
-              </div>
+              <button
+                onClick={() => { setShowAddModal(false); setPendingBarcode(''); }}
+                className="text-gray-500"
+              >
+                <X size={24} />
+              </button>
             </div>
 
-            <div className="space-y-4 min-w-0">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Название продукта
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700">Название продукта</label>
+                  <button
+                    type="button"
+                    onClick={handleBarcodeScan}
+                    disabled={barcodeLoading}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50 transition-colors"
+                    title="Сканировать штрихкод"
+                  >
+                    {barcodeLoading
+                      ? <Loader2 size={15} className="animate-spin" />
+                      : <ScanLine size={15} />}
+                    {barcodeLoading ? 'Загрузка...' : 'Штрихкод'}
+                  </button>
+                </div>
                 <AutocompleteInput
                   value={addFormData.name}
                   onChange={(value) => setAddFormData(prev => ({ ...prev, name: value, autoFilled: false }))}
@@ -2496,6 +2773,12 @@ const OlivierApp = () => {
                   placeholder="Название продукта"
                   products={PRODUCTS_DB}
                 />
+                {pendingBarcode && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-blue-600">
+                    <ScanLine size={12} />
+                    <span>Штрихкод <span className="font-mono">{pendingBarcode}</span> будет сохранён</span>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -2568,7 +2851,7 @@ const OlivierApp = () => {
                       type="date"
                       value={addFormData.expiryDate}
                       onChange={(e) => setAddFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className={`block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
+                      className={`w-full p-3 border border-gray-200 rounded-xl ${addFormData.autoFilled && !addFormData.expiryDate ? 'italic text-gray-600' : ''}`}
                     />
                   </div>
                   {addFormData.autoFilled && !addFormData.expiryDate && (
@@ -2592,8 +2875,8 @@ const OlivierApp = () => {
 
       {/* Edit Modal */}
       {showEditModal && editingItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md overflow-x-hidden">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowEditModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Редактировать продукт</h2>
               <button
@@ -2604,7 +2887,7 @@ const OlivierApp = () => {
               </button>
             </div>
 
-            <div className="space-y-4 min-w-0">
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
                 <input
@@ -2664,6 +2947,21 @@ const OlivierApp = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
+                <select
+                  value={editFormData.category}
+                  onChange={(e) => setEditFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  <option value="">Выберите категорию</option>
+                  {PRODUCT_CATEGORIES.map(category => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+              </div>
+
+
               {currentTab === 'pantry' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Срок годности</label>
@@ -2672,7 +2970,7 @@ const OlivierApp = () => {
                       type="date"
                       value={editFormData.expiryDate}
                       onChange={(e) => setEditFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                      className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none"
+                      className="w-full p-3 border border-gray-200 rounded-xl"
                     />
                   </div>
                 </div>
@@ -2688,6 +2986,7 @@ const OlivierApp = () => {
                             name: editFormData.name,
                             quantity: Number(editFormData.quantity) || item.quantity,
                             measure: editFormData.measure || item.measure,
+                            category: editFormData.category || item.category || '🏷️ Прочее',
                             expiryDate: new Date(editFormData.expiryDate),
                             autoFilled: false
                           }
@@ -2700,7 +2999,8 @@ const OlivierApp = () => {
                             ...item,
                             name: editFormData.name,
                             quantity: Number(editFormData.quantity) || item.quantity,
-                            measure: editFormData.measure || item.measure
+                            measure: editFormData.measure || item.measure,
+                            category: editFormData.category || item.category || '🏷️ Прочее'
                           }
                         : item
                     ));
@@ -2720,8 +3020,8 @@ const OlivierApp = () => {
 
       {/* Recipe Modal */}
       {showRecipeModal && selectedRecipe && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowRecipeModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">{selectedRecipe.name}</h2>
               <button
@@ -2809,8 +3109,8 @@ const OlivierApp = () => {
 
       {/* Add Recipe Modal */}
       {showAddRecipeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowAddRecipeModal(false); setEditingRecipeId(null); setRecipeFormData({ name: '', ingredients: [], difficulty: 'легкий', time: 30, steps: [''], comments: '', image: '' }); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold">{editingRecipeId ? 'Редактировать рецепт' : 'Добавить рецепт'}</h2>
               <button onClick={() => {
@@ -3113,8 +3413,8 @@ const OlivierApp = () => {
 
       {/* Date Edit Modal */}
       {showDateModal && editingDateProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => { setShowDateModal(false); setEditingDateProduct(null); }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold">Изменить срок годности</h2>
               <button 
@@ -3148,7 +3448,7 @@ const OlivierApp = () => {
                     updateExpiryDate(e.target.value);
                   }
                 }}
-                className="block w-full min-w-0 max-w-full p-3 border border-gray-200 rounded-xl text-sm appearance-none focus:border-blue-500 focus:outline-none"
+                className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
                 autoFocus
               />
             </div>
@@ -3168,8 +3468,8 @@ const OlivierApp = () => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirmModal && deletingRecipe && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={cancelDeleteRecipe}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold text-red-600">Удалить рецепт?</h2>
               <button 
@@ -3206,9 +3506,17 @@ const OlivierApp = () => {
         </div>
       )}
 
+      {/* Barcode Scanner */}
+      {showBarcodeScanner && (
+        <BarcodeScannerModal
+          onDetected={handleBarcodeDetected}
+          onClose={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
       {/* Modal Notification */}
       {notification && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center p-4 z-[70]">
           <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-xl border border-gray-200">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-gray-500 rounded-full flex items-center justify-center">
