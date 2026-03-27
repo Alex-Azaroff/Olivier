@@ -780,6 +780,9 @@ const OlivierApp = () => {
   const [editingDateProduct, setEditingDateProduct] = useState(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [deletingRecipe, setDeletingRecipe] = useState(null);
+  const [showEditMealModal, setShowEditMealModal] = useState(false);
+  const [editingMeal, setEditingMeal] = useState(null);
+  const [editMealFormData, setEditMealFormData] = useState({ name: '', category: 'Суп', portions: 3, preparedDate: '', expiresAt: '' });
 
   const [sharedFridgeId, setSharedFridgeId] = useState(null);
   const [sharedInviteCode, setSharedInviteCode] = useState(null);
@@ -2806,34 +2809,67 @@ const OlivierApp = () => {
                     >
                       <div className="flex justify-between items-start gap-3">
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-gray-900 text-left">
-                            {meal.name}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setEditingMeal(meal);
+                                setEditMealFormData({
+                                  name: meal.name,
+                                  category: meal.category,
+                                  portions: meal.portions ?? 3,
+                                  preparedDate: meal.preparedDate ? meal.preparedDate.toISOString().split('T')[0] : '',
+                                  expiresAt: meal.expiresAt ? meal.expiresAt.toISOString().split('T')[0] : ''
+                                });
+                                setShowEditMealModal(true);
+                              }}
+                              className="font-semibold text-gray-900 text-left hover:text-blue-600 transition-colors"
+                              title="Редактировать блюдо"
+                            >
+                              {meal.name}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingMeal(meal);
+                                setEditMealFormData({
+                                  name: meal.name,
+                                  category: meal.category,
+                                  portions: meal.portions ?? 3,
+                                  preparedDate: meal.preparedDate ? meal.preparedDate.toISOString().split('T')[0] : '',
+                                  expiresAt: meal.expiresAt ? meal.expiresAt.toISOString().split('T')[0] : ''
+                                });
+                                setShowEditMealModal(true);
+                              }}
+                              className="text-gray-400 hover:text-blue-500 transition-colors"
+                              title="Редактировать блюдо"
+                            >
+                              <Edit3 size={14} />
+                            </button>
                           </div>
                           <div className="text-sm text-gray-600 mt-1">
                             {meal.category}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Приготовлено: {meal.preparedDate ? meal.preparedDate.toLocaleDateString('ru-RU') : '—'}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Истекает: {meal.expiresAt ? meal.expiresAt.toLocaleDateString('ru-RU') : '—'}
                           </div>
                           {meal.portions != null && (
                             <div className="text-xs text-orange-600 font-semibold mt-1">
                               Порций осталось: {meal.portions}
                             </div>
                           )}
+                          {meal.expiresAt && (() => {
+                            const mealExpiry = getExpiryStatus(meal.expiresAt);
+                            return (
+                              <div className="text-sm mt-1">
+                                <span className={`${mealExpiry.color} font-medium`}>
+                                  до {meal.expiresAt.toLocaleDateString('ru-RU')}
+                                </span>
+                                <span className={`ml-1 ${mealExpiry.color}`}>
+                                  ({mealExpiry.status === 'expired'
+                                    ? `просрочено ${mealExpiry.days} дн.`
+                                    : `${mealExpiry.days} дн.`})
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div className="flex flex-col items-end gap-2">
-                          <div
-                            className={`text-xs font-semibold px-2 py-1 rounded-lg ${
-                              meal.expiresAt && meal.expiresAt < new Date()
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-yellow-100 text-yellow-700'
-                            }`}
-                          >
-                            {formatHoursLeft(meal.expiresAt)}
-                          </div>
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleMealKus(meal)}
@@ -4189,6 +4225,103 @@ const OlivierApp = () => {
                   {editingRecipeId ? 'Сохранить' : 'Добавить'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Meal Modal */}
+      {showEditMealModal && editingMeal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowEditMealModal(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Редактировать блюдо</h2>
+              <button onClick={() => setShowEditMealModal(false)} className="text-gray-500">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
+                <input
+                  type="text"
+                  value={editMealFormData.name}
+                  onChange={(e) => setEditMealFormData(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
+                <select
+                  value={editMealFormData.category}
+                  onChange={(e) => setEditMealFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                >
+                  {['Суп', 'Гарнир', 'Мясо', 'Рыба', 'Салат', 'Десерт', 'Другое'].map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Порций осталось</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditMealFormData(prev => ({ ...prev, portions: Math.max(1, prev.portions - 1) }))}
+                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold"
+                  >-</button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editMealFormData.portions}
+                    onChange={(e) => setEditMealFormData(prev => ({ ...prev, portions: Number(e.target.value) || 1 }))}
+                    className="flex-1 p-3 border border-gray-200 rounded-xl text-center"
+                  />
+                  <button
+                    onClick={() => setEditMealFormData(prev => ({ ...prev, portions: prev.portions + 1 }))}
+                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold"
+                  >+</button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Дата приготовления</label>
+                <input
+                  type="date"
+                  value={editMealFormData.preparedDate}
+                  onChange={(e) => setEditMealFormData(prev => ({ ...prev, preparedDate: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Хранится до</label>
+                <input
+                  type="date"
+                  value={editMealFormData.expiresAt}
+                  onChange={(e) => setEditMealFormData(prev => ({ ...prev, expiresAt: e.target.value }))}
+                  className="w-full p-3 border border-gray-200 rounded-xl"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  setPreparedMeals(prev => prev.map(m =>
+                    m.id === editingMeal.id
+                      ? {
+                          ...m,
+                          name: editMealFormData.name || m.name,
+                          category: editMealFormData.category,
+                          portions: Number(editMealFormData.portions) || m.portions,
+                          preparedDate: editMealFormData.preparedDate ? new Date(editMealFormData.preparedDate) : m.preparedDate,
+                          expiresAt: editMealFormData.expiresAt ? new Date(editMealFormData.expiresAt) : m.expiresAt
+                        }
+                      : m
+                  ));
+                  setShowEditMealModal(false);
+                  setEditingMeal(null);
+                  showNotification('Блюдо обновлено');
+                }}
+                className="w-full bg-blue-500 text-white p-3 rounded-xl font-semibold"
+              >
+                Сохранить
+              </button>
             </div>
           </div>
         </div>
