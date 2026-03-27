@@ -1555,6 +1555,14 @@ const OlivierApp = () => {
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
+    if (fridgeIsPersonal) {
+      showNotification('Это личная кладовая — покидать нечего. Создайте приглашение или вступите по коду.');
+      setShowShareModal(false);
+      return;
+    }
+    if (!window.confirm('Покинуть семейную кладовую? У вас будет новая пустая личная кладовая.')) {
+      return;
+    }
     setShareBusy(true);
     const fid = sharedFridgeId;
     try {
@@ -3057,8 +3065,11 @@ const OlivierApp = () => {
                   <p className="text-gray-600">После открытия из Telegram кнопка станет синей — можно создавать код или вводить код семьи.</p>
                 )}
               </div>
-            ) : sharedFridgeId ? (
+            ) : sharedFridgeId && !fridgeIsPersonal ? (
               <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Вы в <span className="font-medium text-gray-800">семейной</span> кладовой{fridgeDisplayName ? ` «${fridgeDisplayName}»` : ''}. Поделитесь кодом или покиньте группу.
+                </p>
                 <div>
                   <div className="text-sm font-medium text-gray-700 mb-1">Код приглашения</div>
                   <div className="flex gap-2 items-center">
@@ -3086,6 +3097,11 @@ const OlivierApp = () => {
               </div>
             ) : (
               <div className="space-y-4">
+                {sharedFridgeId && fridgeIsPersonal && (
+                  <p className="text-sm text-gray-600 bg-blue-50 rounded-xl p-3 border border-blue-100">
+                    Сейчас у вас <span className="font-medium">личная кладовая</span>. Создайте приглашение (продукты станут общими) или введите код семьи ниже.
+                  </p>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Название холодильника для семьи</label>
                   <input
