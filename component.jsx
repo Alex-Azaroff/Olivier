@@ -41,6 +41,19 @@ const normalizeMeasure = (m) => {
   return raw.endsWith('.') ? raw : raw ? raw + '.' : '';
 };
 
+/** Строка inventory (Supabase) → объект для UI кладовой */
+const mapInventoryRowToPantryItem = (row) => ({
+  id: row.id,
+  name: row.name,
+  category: row.category || '🏷️ Прочее',
+  measure: normalizeMeasure(row.measure) || row.measure || 'шт.',
+  quantity: Number(row.quantity) || 0,
+  expiryDate: row.expiry_date ? new Date(row.expiry_date) : null,
+  shelfLife: row.shelf_life != null ? row.shelf_life : 7,
+  autoFilled: Boolean(row.auto_filled),
+  addedAt: row.created_at ? new Date(row.created_at) : undefined
+});
+
 const convertQuantity = (quantity, fromMeasure, toMeasure) => {
   try {
     const q = Number(quantity);
@@ -805,6 +818,11 @@ const OlivierApp = () => {
 
   const [sharedFridgeId, setSharedFridgeId] = useState(null);
   const [sharedInviteCode, setSharedInviteCode] = useState(null);
+  /** Отображаемое имя текущего холодильника (личный или семейный) */
+  const [fridgeDisplayName, setFridgeDisplayName] = useState('');
+  const [fridgeIsPersonal, setFridgeIsPersonal] = useState(false);
+  /** Имя при создании семейной кладовой */
+  const [createFridgeNameDraft, setCreateFridgeNameDraft] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
@@ -849,40 +867,105 @@ const OlivierApp = () => {
     image: ''
   });
 
-  const createDefaultPantryItems = () => {
-    const now = Date.now();
+  /** Кладовая в Supabase: только таблица inventory, не JSON в state */
+  const usesCloudInventory = Boolean(supabase && telegramUserId && sharedFridgeId);
 
-    const makeItem = (productName, quantity, measureOverride) => {
-      const product = PRODUCTS_DB.find(p => p.name === productName) || {
-        name: productName,
-        category: '🏷️ Прочее',
-        measure: measureOverride || 'шт.',
-        shelfLife: 7
-      };
-
-      const measure = measureOverride || product.measure;
-      const shelfLife = product.shelfLife || 7;
-      const expiryDate = new Date(now + shelfLife * 24 * 60 * 60 * 1000);
-
-      return {
-        id: Date.now() + Math.random(),
-        name: product.name,
-        category: product.category,
-        measure,
-        quantity,
-        expiryDate,
-        autoFilled: true
-      };
-    };
-
-    return [
-      makeItem('Рис', 1, 'кг.'),
-      makeItem('Молоко', 1.5, 'л.'),
-      makeItem('Яблоки', 3, 'шт.')
-    ];
+  const fetchPantryInventory = async (fridgeId) => {
+    if (!supabase || !fridgeId) return [];
+    const { data, error } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('fridge_id', fridgeId)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.error('inventory fetch', error);
+      return [];
+    }
+    return (data || []).map(mapInventoryRowToPantryItem);
   };
 
-  
+  const insertInventoryRow = async (fridgeId, payload) => {
+    if (!supabase || !fridgeId) return { data: null, error: new Error('no supabase') };
+    const row = {
+      fridge_id: fridgeId,
+      name: payload.name,
+      category: payload.category || '🏷️ Прочее',
+      measure: normalizeMeasure(payload.measure) || payload.measure || 'шт.',
+      quantity: payload.quantity,
+      expiry_date: payload.expiryDate ? payload.expiryDate.toISOString() : null,
+      shelf_life: payload.shelfLife != null ? payload.shelfLife : 7,
+      auto_filled: Boolean(payload.autoFilled),
+      created_by_telegram_id: telegramUserId,
+      updated_at: new Date().toISOString()
+    };
+    return supabase.from('inventory').insert(row).select().single();
+  };
+
+  const updateInventoryRow = async (id, patch) => {
+    if (!supabase || !id) return { error: new Error('no id') };
+    const dbPatch = { updated_at: new Date().toISOString() };
+    if (patch.name != null) dbPatch.name = patch.name;
+    if (patch.category != null) dbPatch.category = patch.category;
+    if (patch.measure != null) dbPatch.measure = normalizeMeasure(patch.measure) || patch.measure;
+    if (patch.quantity != null) dbPatch.quantity = patch.quantity;
+    if (patch.expiryDate !== undefined) {
+      dbPatch.expiry_date = patch.expiryDate ? patch.expiryDate.toISOString() : null;
+    }
+    if (patch.shelfLife != null) dbPatch.shelf_life = patch.shelfLife;
+    if (patch.autoFilled != null) dbPatch.auto_filled = patch.autoFilled;
+    return supabase.from('inventory').update(dbPatch).eq('id', id).select().single();
+  };
+
+  const deleteInventoryRow = async (id) => {
+    if (!supabase || !id) return { error: new Error('no id') };
+    return supabase.from('inventory').delete().eq('id', id);
+  };
+
+  /** Создаёт личную группу + пустой fridge_states + membership (один пользователь) */
+  const ensurePersonalFridge = async () => {
+    if (!supabase || !telegramUserId) return null;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const code = generateInviteCode();
+      const { data: grp, error: e1 } = await supabase
+        .from('fridge_groups')
+        .insert({
+          invite_code: code,
+          created_by_telegram_id: telegramUserId,
+          name: 'Личная кладовая',
+          is_personal: true
+        })
+        .select('id, invite_code, name, is_personal')
+        .single();
+      if (e1) {
+        lastErr = e1;
+        continue;
+      }
+      const nowIso = new Date().toISOString();
+      const { error: e2 } = await supabase.from('fridge_states').insert({
+        fridge_id: grp.id,
+        state: {},
+        updated_at: nowIso
+      });
+      if (e2) {
+        await supabase.from('fridge_groups').delete().eq('id', grp.id);
+        lastErr = e2;
+        continue;
+      }
+      const { error: e3 } = await supabase.from('fridge_members').insert({
+        fridge_id: grp.id,
+        telegram_user_id: telegramUserId
+      });
+      if (e3) {
+        await supabase.from('fridge_groups').delete().eq('id', grp.id);
+        lastErr = e3;
+        return null;
+      }
+      return grp;
+    }
+    console.error('ensurePersonalFridge', lastErr);
+    return null;
+  };
 
   // Загрузка: общий холодильник (fridge_*) или личный user_states + localStorage
   useEffect(() => {
@@ -907,7 +990,7 @@ const OlivierApp = () => {
       if (!supabase || !telegramUserId) {
         const local = loadLocalState(telegramUserId, null);
         applyLocalBundle(local);
-        if (!local) setPantryItems(createDefaultPantryItems());
+        if (!local?.pantryItems) setPantryItems([]);
         setIsLoadingState(false);
         return;
       }
@@ -923,19 +1006,46 @@ const OlivierApp = () => {
 
         if (cancelled) return;
 
+        const applyNonPantryFromHydrate = (h) => {
+          if (!h) return;
+          setPreparedMeals(h.preparedMeals || []);
+          setShoppingItems(h.shoppingItems || []);
+          setFavoriteProducts(h.favoriteProducts || []);
+          setFavoriteRecipes(h.favoriteRecipes || []);
+          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+          setCustomRecipes(h.customRecipes || []);
+        };
+
+        const migrateLegacyPantryRows = async (fridgeId, legacyItems) => {
+          if (!legacyItems?.length) return;
+          for (const item of legacyItems) {
+            const { error: insErr } = await insertInventoryRow(fridgeId, {
+              name: item.name,
+              category: item.category,
+              measure: item.measure,
+              quantity: item.quantity,
+              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+              shelfLife: item.shelfLife ?? 7,
+              autoFilled: item.autoFilled ?? false
+            });
+            if (insErr) console.error('migrate pantry row', insErr);
+          }
+        };
+
         if (membership?.fridge_id) {
           const fid = membership.fridge_id;
           setSharedFridgeId(fid);
 
           const { data: grp } = await supabase
             .from('fridge_groups')
-            .select('invite_code')
+            .select('invite_code, name, is_personal')
             .eq('id', fid)
             .maybeSingle();
-          if (!cancelled) setSharedInviteCode(grp?.invite_code || null);
-
-          const localFridge = loadLocalState(telegramUserId, fid);
-          if (localFridge) applyLocalBundle(localFridge);
+          if (!cancelled) {
+            setSharedInviteCode(grp?.invite_code || null);
+            setFridgeDisplayName(grp?.name || 'Кладовая');
+            setFridgeIsPersonal(Boolean(grp?.is_personal));
+          }
 
           const { data: fsRow, error: fsErr } = await supabase
             .from('fridge_states')
@@ -947,41 +1057,47 @@ const OlivierApp = () => {
 
           if (cancelled) return;
 
-          if (fsRow?.state && typeof fsRow.state === 'object') {
-            const keys = Object.keys(fsRow.state);
-            if (keys.length > 0) {
-              const h = hydrateAppState(fsRow.state);
-              if (h) {
-                setPantryItems(h.pantryItems);
-                setPreparedMeals(h.preparedMeals || []);
-                setShoppingItems(h.shoppingItems);
-                setFavoriteProducts(h.favoriteProducts);
-                setFavoriteRecipes(h.favoriteRecipes);
-          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-                if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-                setCustomRecipes(h.customRecipes);
-              }
-              lastFridgeRemoteAtRef.current = fsRow.updated_at;
-            } else if (!localFridge) {
-              setPantryItems(createDefaultPantryItems());
-              setPreparedMeals([]);
-              setShoppingItems([]);
-              setFavoriteProducts([]);
-              setFavoriteRecipes([]);
-              setCustomRecipes([]);
+          const rawState = fsRow?.state && typeof fsRow.state === 'object' ? fsRow.state : {};
+          const stateKeys = Object.keys(rawState);
+          const h = stateKeys.length > 0 ? hydrateAppState(rawState) : null;
+          if (h && stateKeys.length > 0) {
+            applyNonPantryFromHydrate(h);
+          } else {
+            const lf = loadLocalState(telegramUserId, fid);
+            if (lf) {
+              if (lf.preparedMeals) setPreparedMeals(lf.preparedMeals);
+              if (lf.shoppingItems) setShoppingItems(lf.shoppingItems);
+              if (lf.favoriteProducts) setFavoriteProducts(lf.favoriteProducts);
+              if (lf.favoriteRecipes) setFavoriteRecipes(lf.favoriteRecipes);
+              if (lf.favoriteMeals) setFavoriteMeals(lf.favoriteMeals);
+              if (lf.customRecipes) setCustomRecipes(lf.customRecipes);
             }
-          } else if (!localFridge) {
-            setPantryItems(createDefaultPantryItems());
-            setPreparedMeals([]);
-            setShoppingItems([]);
-            setFavoriteProducts([]);
-            setFavoriteRecipes([]);
-            setCustomRecipes([]);
           }
+          if (fsRow?.updated_at) lastFridgeRemoteAtRef.current = fsRow.updated_at;
+
+          let inv = await fetchPantryInventory(fid);
+          if (inv.length === 0 && h?.pantryItems?.length) {
+            await migrateLegacyPantryRows(fid, h.pantryItems);
+            const stripped = { ...rawState, pantryItems: [] };
+            const nowIso = new Date().toISOString();
+            await supabase.from('fridge_states').upsert(
+              { fridge_id: fid, state: stripped, updated_at: nowIso },
+              { onConflict: 'fridge_id' }
+            );
+            lastFridgeRemoteAtRef.current = nowIso;
+            inv = await fetchPantryInventory(fid);
+          }
+          if (!cancelled) setPantryItems(inv);
         } else {
           const local = loadLocalState(telegramUserId, null);
-          applyLocalBundle(local);
+          if (local) {
+            if (local.preparedMeals) setPreparedMeals(local.preparedMeals);
+            if (local.shoppingItems) setShoppingItems(local.shoppingItems);
+            if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
+            if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
+            if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
+            if (local.customRecipes) setCustomRecipes(local.customRecipes);
+          }
 
           const { data, error } = await supabase
             .from('user_states')
@@ -996,32 +1112,64 @@ const OlivierApp = () => {
 
           if (cancelled) return;
 
-          if (data?.state) {
-            const state = data.state;
-            if (state.pantryItems) {
-              setPantryItems(
-                state.pantryItems.map((item) => ({
-                  ...item,
-                  expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
-                }))
+          const state = data?.state && typeof data.state === 'object' ? data.state : {};
+
+          if (state.shoppingItems) setShoppingItems(state.shoppingItems);
+          if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
+          if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
+          if (state.favoriteMeals) setFavoriteMeals(state.favoriteMeals);
+          if (state.customRecipes) setCustomRecipes(state.customRecipes);
+          if (state.preparedMeals) {
+            setPreparedMeals(
+              state.preparedMeals.map((meal) => ({
+                ...meal,
+                preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
+                expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
+              }))
+            );
+          }
+
+          const pantryFromState = Array.isArray(state.pantryItems) ? state.pantryItems : null;
+          const legacyPantry = (pantryFromState && pantryFromState.length
+            ? pantryFromState
+            : local?.pantryItems || []
+          ).map((item) => ({
+            ...item,
+            expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+          }));
+
+          const personalGrp = await ensurePersonalFridge();
+          if (cancelled || !personalGrp?.id) {
+            if (!cancelled && !personalGrp) {
+              setStateError('Не удалось создать личную кладовую');
+              setPantryItems([]);
+            }
+          } else {
+            setSharedFridgeId(personalGrp.id);
+            setSharedInviteCode(personalGrp.invite_code || null);
+            setFridgeDisplayName(personalGrp.name || 'Личная кладовая');
+            setFridgeIsPersonal(true);
+
+            if (legacyPantry.length) {
+              await migrateLegacyPantryRows(personalGrp.id, legacyPantry);
+              const nextState = { ...state, pantryItems: [] };
+              await supabase.from('user_states').upsert(
+                { telegram_user_id: telegramUserId, state: nextState },
+                { onConflict: 'telegram_user_id' }
               );
             }
-            if (state.shoppingItems) setShoppingItems(state.shoppingItems);
-            if (state.favoriteProducts) setFavoriteProducts(state.favoriteProducts);
-            if (state.favoriteRecipes) setFavoriteRecipes(state.favoriteRecipes);
-            if (state.favoriteMeals) setFavoriteMeals(state.favoriteMeals);
-            if (state.customRecipes) setCustomRecipes(state.customRecipes);
-            if (state.preparedMeals) {
-              setPreparedMeals(
-                state.preparedMeals.map((meal) => ({
-                  ...meal,
-                  preparedDate: meal.preparedDate ? new Date(meal.preparedDate) : null,
-                  expiresAt: meal.expiresAt ? new Date(meal.expiresAt) : null
-                }))
-              );
-            }
-          } else if (!local) {
-            setPantryItems(createDefaultPantryItems());
+
+            const inv = await fetchPantryInventory(personalGrp.id);
+            if (!cancelled) setPantryItems(inv);
+
+            const { data: fsNew } = await supabase
+              .from('fridge_states')
+              .select('state, updated_at')
+              .eq('fridge_id', personalGrp.id)
+              .maybeSingle();
+            const h2 = fsNew?.state ? hydrateAppState(fsNew.state) : null;
+            if (h2) applyNonPantryFromHydrate(h2);
+            if (fsNew?.updated_at) lastFridgeRemoteAtRef.current = fsNew.updated_at;
           }
         }
       } catch (e) {
@@ -1044,11 +1192,8 @@ const OlivierApp = () => {
 
     const saveState = async () => {
       try {
+        const cloudInv = Boolean(supabase && telegramUserId && sharedFridgeId);
         const stateToSave = {
-          pantryItems: pantryItems.map((item) => ({
-            ...item,
-            expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
-          })),
           preparedMeals: preparedMeals.map((meal) => ({
             ...meal,
             preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
@@ -1060,6 +1205,14 @@ const OlivierApp = () => {
           favoriteMeals,
           customRecipes
         };
+        if (!cloudInv) {
+          stateToSave.pantryItems = pantryItems.map((item) => ({
+            ...item,
+            expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
+          }));
+        } else {
+          stateToSave.pantryItems = [];
+        }
 
         if (sharedFridgeId) {
           saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
@@ -1124,18 +1277,24 @@ const OlivierApp = () => {
           .select('state, updated_at')
           .eq('fridge_id', sharedFridgeId)
           .maybeSingle();
-        if (error || !data?.state) return;
+        if (error) {
+          const inv = await fetchPantryInventory(sharedFridgeId);
+          setPantryItems(inv);
+          return;
+        }
+        const inv = await fetchPantryInventory(sharedFridgeId);
+        setPantryItems(inv);
         if (
-          lastFridgeRemoteAtRef.current &&
-          data.updated_at &&
-          data.updated_at <= lastFridgeRemoteAtRef.current
+          !data?.state ||
+          (lastFridgeRemoteAtRef.current &&
+            data.updated_at &&
+            data.updated_at <= lastFridgeRemoteAtRef.current)
         ) {
           return;
         }
         lastFridgeRemoteAtRef.current = data.updated_at;
         const h = hydrateAppState(data.state);
         if (!h) return;
-        setPantryItems(h.pantryItems);
         setShoppingItems(h.shoppingItems);
         setFavoriteProducts(h.favoriteProducts);
         setFavoriteRecipes(h.favoriteRecipes);
@@ -1158,6 +1317,26 @@ const OlivierApp = () => {
     };
   }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
 
+  // Realtime: кладовая из таблицы inventory (другой участник меняет продукты)
+  useEffect(() => {
+    if (!supabase || !sharedFridgeId || !telegramUserId || isLoadingState) return;
+    const fid = sharedFridgeId;
+    const channel = supabase
+      .channel(`inventory_rt_${fid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory', filter: `fridge_id=eq.${fid}` },
+        async () => {
+          const inv = await fetchPantryInventory(fid);
+          setPantryItems(inv);
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, telegramUserId, sharedFridgeId, isLoadingState]);
+
   const showNotification = (message, durationMs = 1000) => {
     setNotification(message);
     setTimeout(() => setNotification(''), durationMs);
@@ -1175,15 +1354,24 @@ const OlivierApp = () => {
         .select('fridge_id')
         .eq('telegram_user_id', telegramUserId)
         .maybeSingle();
-      if (existing?.fridge_id) {
+      if (!existing?.fridge_id) {
+        showNotification('Нет активной кладовой');
+        return;
+      }
+      const oldFid = existing.fridge_id;
+      const { data: gRow } = await supabase
+        .from('fridge_groups')
+        .select('is_personal')
+        .eq('id', oldFid)
+        .maybeSingle();
+      if (!gRow?.is_personal) {
         showNotification('Вы уже в общей кладовой');
         return;
       }
+
+      const displayName = (createFridgeNameDraft || '').trim() || 'Наша кладовая';
       const stateToSave = {
-        pantryItems: pantryItems.map((item) => ({
-          ...item,
-          expiryDate: item.expiryDate ? item.expiryDate.toISOString() : null
-        })),
+        pantryItems: [],
         preparedMeals: preparedMeals.map((meal) => ({
           ...meal,
           preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
@@ -1195,43 +1383,82 @@ const OlivierApp = () => {
         favoriteMeals,
         customRecipes
       };
+
+      const { data: invRows } = await supabase.from('inventory').select('*').eq('fridge_id', oldFid);
+
       let lastErr = null;
       for (let attempt = 0; attempt < 10; attempt++) {
         const code = generateInviteCode();
         const { data: grp, error: e1 } = await supabase
           .from('fridge_groups')
-          .insert({ invite_code: code, created_by_telegram_id: telegramUserId })
-          .select('id')
+          .insert({
+            invite_code: code,
+            created_by_telegram_id: telegramUserId,
+            name: displayName,
+            is_personal: false
+          })
+          .select('id, invite_code, name, is_personal')
           .single();
         if (e1) {
           lastErr = e1;
           continue;
         }
-        const fridgeId = grp.id;
+        const newId = grp.id;
         const nowIso = new Date().toISOString();
         const { error: e2 } = await supabase.from('fridge_states').insert({
-          fridge_id: fridgeId,
+          fridge_id: newId,
           state: stateToSave,
           updated_at: nowIso
         });
         if (e2) {
-          await supabase.from('fridge_groups').delete().eq('id', fridgeId);
+          await supabase.from('fridge_groups').delete().eq('id', newId);
           lastErr = e2;
           showNotification('Не удалось создать общую кладовую');
           return;
         }
-        const { error: e3 } = await supabase.from('fridge_members').insert({
-          fridge_id: fridgeId,
-          telegram_user_id: telegramUserId
-        });
-        if (e3) {
-          await supabase.from('fridge_groups').delete().eq('id', fridgeId);
-          showNotification('Не удалось добавить вас в группу');
+
+        const copyRows = (invRows || []).map((r) => ({
+          fridge_id: newId,
+          name: r.name,
+          category: r.category,
+          measure: r.measure,
+          quantity: r.quantity,
+          expiry_date: r.expiry_date,
+          shelf_life: r.shelf_life,
+          auto_filled: r.auto_filled,
+          created_by_telegram_id: r.created_by_telegram_id,
+          updated_at: nowIso
+        }));
+        if (copyRows.length) {
+          const { error: eInv } = await supabase.from('inventory').insert(copyRows);
+          if (eInv) {
+            await supabase.from('fridge_groups').delete().eq('id', newId);
+            showNotification('Не удалось перенести продукты');
+            return;
+          }
+        }
+
+        const { error: eUp } = await supabase
+          .from('fridge_members')
+          .update({ fridge_id: newId })
+          .eq('telegram_user_id', telegramUserId);
+        if (eUp) {
+          await supabase.from('fridge_groups').delete().eq('id', newId);
+          showNotification('Не удалось переключить кладовую');
           return;
         }
-        setSharedFridgeId(fridgeId);
+
+        await supabase.from('fridge_groups').delete().eq('id', oldFid);
+
+        setSharedFridgeId(newId);
         setSharedInviteCode(code);
+        setFridgeDisplayName(displayName);
+        setFridgeIsPersonal(false);
         lastFridgeRemoteAtRef.current = nowIso;
+        skipNextFridgePollRef.current = true;
+        const inv = await fetchPantryInventory(newId);
+        setPantryItems(inv);
+        setCreateFridgeNameDraft('');
         showNotification('Создан код приглашения — отправьте его семье');
         return;
       }
@@ -1257,8 +1484,22 @@ const OlivierApp = () => {
         .eq('telegram_user_id', telegramUserId)
         .maybeSingle();
       if (existing?.fridge_id) {
-        showNotification('Сначала выйдите из текущей общей кладовой');
-        return;
+        const { data: curG } = await supabase
+          .from('fridge_groups')
+          .select('is_personal')
+          .eq('id', existing.fridge_id)
+          .maybeSingle();
+        if (!curG?.is_personal) {
+          showNotification('Сначала выйдите из текущей общей кладовой');
+          return;
+        }
+        const invCheck = await fetchPantryInventory(existing.fridge_id);
+        if (invCheck.length > 0) {
+          showNotification('Очистите личную кладовую или создайте семью через «Создать приглашение»');
+          return;
+        }
+        await supabase.from('fridge_members').delete().eq('telegram_user_id', telegramUserId);
+        await supabase.from('fridge_groups').delete().eq('id', existing.fridge_id);
       }
       const { data: group, error: gErr } = await supabase
         .from('fridge_groups')
@@ -1285,19 +1526,26 @@ const OlivierApp = () => {
       if (fsRow?.state) {
         const h = hydrateAppState(fsRow.state);
         if (h) {
-          setPantryItems(h.pantryItems);
           setPreparedMeals(h.preparedMeals || []);
           setShoppingItems(h.shoppingItems);
           setFavoriteProducts(h.favoriteProducts);
           setFavoriteRecipes(h.favoriteRecipes);
           if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
           setCustomRecipes(h.customRecipes);
         }
         lastFridgeRemoteAtRef.current = fsRow.updated_at;
       }
+      const { data: gMeta } = await supabase
+        .from('fridge_groups')
+        .select('name, is_personal')
+        .eq('id', group.id)
+        .maybeSingle();
+      const invJoined = await fetchPantryInventory(group.id);
+      setPantryItems(invJoined);
       setSharedFridgeId(group.id);
       setSharedInviteCode(code);
+      setFridgeDisplayName(gMeta?.name || 'Кладовая');
+      setFridgeIsPersonal(false);
       setJoinCodeDraft('');
       showNotification('Вы присоединились к общей кладовой');
     } finally {
@@ -1320,6 +1568,8 @@ const OlivierApp = () => {
       }
       setSharedFridgeId(null);
       setSharedInviteCode(null);
+      setFridgeDisplayName('');
+      setFridgeIsPersonal(false);
       lastFridgeRemoteAtRef.current = null;
 
       const { data: pers } = await supabase
@@ -1329,14 +1579,6 @@ const OlivierApp = () => {
         .maybeSingle();
       if (pers?.state) {
         const st = pers.state;
-        if (st.pantryItems) {
-          setPantryItems(
-            st.pantryItems.map((item) => ({
-              ...item,
-              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
-            }))
-          );
-        }
         if (st.shoppingItems) setShoppingItems(st.shoppingItems);
         if (st.favoriteProducts) setFavoriteProducts(st.favoriteProducts);
         if (st.favoriteRecipes) setFavoriteRecipes(st.favoriteRecipes);
@@ -1345,16 +1587,24 @@ const OlivierApp = () => {
       } else {
         const local = loadLocalState(telegramUserId, null);
         if (local) {
-          if (local.pantryItems) setPantryItems(local.pantryItems);
           if (local.shoppingItems) setShoppingItems(local.shoppingItems);
           if (local.favoriteProducts) setFavoriteProducts(local.favoriteProducts);
           if (local.favoriteRecipes) setFavoriteRecipes(local.favoriteRecipes);
           if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
-      if (local.favoriteMeals) setFavoriteMeals(local.favoriteMeals);
           if (local.customRecipes) setCustomRecipes(local.customRecipes);
-        } else {
-          setPantryItems(createDefaultPantryItems());
         }
+      }
+
+      const personalGrp = await ensurePersonalFridge();
+      if (personalGrp?.id) {
+        setSharedFridgeId(personalGrp.id);
+        setSharedInviteCode(personalGrp.invite_code || null);
+        setFridgeDisplayName(personalGrp.name || 'Личная кладовая');
+        setFridgeIsPersonal(true);
+        const inv = await fetchPantryInventory(personalGrp.id);
+        setPantryItems(inv);
+      } else {
+        setPantryItems([]);
       }
       showNotification('Вы вышли из общей кладовой');
     } finally {
@@ -1378,7 +1628,7 @@ const OlivierApp = () => {
     setShowDateModal(true);
   };
 
-  const handleKus = (item) => {
+  const handleKus = async (item) => {
     const catalogProduct = PRODUCTS_DB.find(
       p => p.name.toLowerCase() === item.name.toLowerCase()
     );
@@ -1392,17 +1642,38 @@ const OlivierApp = () => {
       portionMeasure = item.measure;
     }
 
-    // Конвертируем порцию в единицу измерения, которая хранится у элемента в кладовой
     const portionInItemMeasure = convertQuantity(portion, portionMeasure, item.measure);
     const step = getQuantityStep(item.measure);
     const newQty = roundToStep(Number(item.quantity) - portionInItemMeasure, step);
 
+    if (usesCloudInventory && item.id) {
+      if (newQty <= 0) {
+        const { error } = await deleteInventoryRow(item.id);
+        if (error) {
+          showNotification('Не удалось обновить кладовую');
+          return;
+        }
+        setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
+        showNotification(`${item.name} закончился 🪹`);
+      } else {
+        const { data, error } = await updateInventoryRow(item.id, { quantity: newQty });
+        if (error || !data) {
+          showNotification('Не удалось обновить кладовую');
+          return;
+        }
+        const mapped = mapInventoryRowToPantryItem(data);
+        setPantryItems((prev) => prev.map((p) => (p.id === item.id ? mapped : p)));
+        showNotification(`Кусь! −${formatQuantityForDisplay(portionInItemMeasure, item.measure)} ${item.measure} ${item.name}`);
+      }
+      return;
+    }
+
     if (newQty <= 0) {
-      setPantryItems(prev => prev.filter(p => p.id !== item.id));
+      setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
       showNotification(`${item.name} закончился 🪹`);
     } else {
-      setPantryItems(prev =>
-        prev.map(p => p.id === item.id ? { ...p, quantity: newQty } : p)
+      setPantryItems((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, quantity: newQty } : p))
       );
       showNotification(`Кусь! −${formatQuantityForDisplay(portionInItemMeasure, item.measure)} ${item.measure} ${item.name}`);
     }
@@ -1433,15 +1704,24 @@ const OlivierApp = () => {
     }
   };
 
-  const updateExpiryDate = (newDate) => {
+  const updateExpiryDate = async (newDate) => {
     if (editingDateProduct && newDate) {
-      setPantryItems(prevItems =>
-        prevItems.map(item =>
-          item.id === editingDateProduct.id
-            ? { ...item, expiryDate: new Date(newDate) }
-            : item
-        )
-      );
+      const d = new Date(newDate);
+      if (usesCloudInventory && editingDateProduct.id) {
+        const { data, error } = await updateInventoryRow(editingDateProduct.id, { expiryDate: d, autoFilled: false });
+        if (error || !data) {
+          showNotification('Не удалось сохранить срок');
+          return;
+        }
+        const mapped = mapInventoryRowToPantryItem(data);
+        setPantryItems((prevItems) => prevItems.map((item) => (item.id === editingDateProduct.id ? mapped : item)));
+      } else {
+        setPantryItems((prevItems) =>
+          prevItems.map((item) =>
+            item.id === editingDateProduct.id ? { ...item, expiryDate: d } : item
+          )
+        );
+      }
       setShowDateModal(false);
       setEditingDateProduct(null);
       showNotification('Срок годности обновлен!');
@@ -1679,25 +1959,46 @@ const OlivierApp = () => {
     fetchByBarcode(code.trim(), 'form');
   }, [barcodeScanTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const addToPantry = (product, quantity = 1, expiryDate = null) => {
+  const addToPantry = async (product, quantity = 1, expiryDate = null) => {
     const existingItem = pantryItems.find(item => item.name === product.name);
     if (existingItem) {
       showNotification('Продукт уже в кладовой');
       return;
     }
 
-    const defaultExpiry = expiryDate || new Date(Date.now() + product.shelfLife * 24 * 60 * 60 * 1000);
-    const newItem = {
-      id: Date.now(),
-      ...product,
+    const shelfLife = product.shelfLife != null ? product.shelfLife : 7;
+    const defaultExpiry = expiryDate || new Date(Date.now() + shelfLife * 24 * 60 * 60 * 1000);
+    const payload = {
+      name: product.name,
+      category: product.category || '🏷️ Прочее',
+      measure: normalizeMeasure(product.measure) || product.measure || 'шт.',
       quantity,
       expiryDate: defaultExpiry,
+      shelfLife,
       autoFilled: !expiryDate
     };
 
-    setPantryItems(prev => [...prev, newItem]);
+    if (usesCloudInventory) {
+      const { data, error } = await insertInventoryRow(sharedFridgeId, payload);
+      if (error) {
+        console.error('insert inventory', error);
+        showNotification('Не удалось добавить в кладовую');
+        return;
+      }
+      setPantryItems((prev) => [...prev, mapInventoryRowToPantryItem(data)]);
+    } else {
+      const newItem = {
+        id: Date.now(),
+        ...product,
+        measure: payload.measure,
+        quantity,
+        expiryDate: defaultExpiry,
+        autoFilled: !expiryDate
+      };
+      setPantryItems((prev) => [...prev, newItem]);
+    }
+
     showNotification(`${product.name} добавлен в кладовую`);
-    // scroll content to bottom so the newly added item is visible
     try {
       setTimeout(() => {
         if (contentRef?.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
@@ -1772,7 +2073,7 @@ const OlivierApp = () => {
       : new Date(Date.now() + selectedProduct.shelfLife * 24 * 60 * 60 * 1000);
 
     if (currentTab === 'pantry') {
-      addToPantry(productToUse, qtyToStore, expiryDate);
+      void addToPantry(productToUse, qtyToStore, expiryDate);
     } else if (currentTab === 'shopping') {
       addToShopping(productToUse, qtyToStore);
     } else if (currentTab === 'favorites') {
@@ -2140,50 +2441,72 @@ const OlivierApp = () => {
     }
   };
 
-  const moveCompletedItemsToPantry = () => {
-    const completedItems = shoppingItems.filter(item => item.completed);
-    
+  const moveCompletedItemsToPantry = async () => {
+    const completedItems = shoppingItems.filter((item) => item.completed);
+
     if (completedItems.length === 0) {
       showNotification('Нет отмеченных товаров для переноса');
       return;
     }
 
-    // Переносим каждый купленный товар в кладовую
-    completedItems.forEach(item => {
-      const productInDB = PRODUCTS_DB.find(p => p.name === item.name);
+    let localPantry = [...pantryItems];
+    for (const item of completedItems) {
+      const productInDB = PRODUCTS_DB.find((p) => p.name === item.name);
       const shelfLife = productInDB ? productInDB.shelfLife : 7;
       const expiryDate = new Date(Date.now() + shelfLife * 24 * 60 * 60 * 1000);
-      
-      // Проверяем, есть ли уже такой продукт в кладовой
-      const existingPantryItem = pantryItems.find(pantryItem => pantryItem.name === item.name);
-      
-      if (existingPantryItem) {
-        // Увеличиваем количество существующего продукта — конвертируем меру при необходимости
+      const existingPantryItem = localPantry.find((pantryItem) => pantryItem.name === item.name);
+
+      if (usesCloudInventory) {
+        if (existingPantryItem) {
+          const addedQty = convertQuantity(item.quantity, item.measure, existingPantryItem.measure);
+          const newQ = roundToStep(Number(existingPantryItem.quantity) + addedQty, getQuantityStep(existingPantryItem.measure));
+          const { data, error } = await updateInventoryRow(existingPantryItem.id, { quantity: newQ });
+          if (error || !data) {
+            showNotification(`Не удалось перенести: ${item.name}`);
+            continue;
+          }
+          const mapped = mapInventoryRowToPantryItem(data);
+          localPantry = localPantry.map((p) => (p.id === existingPantryItem.id ? mapped : p));
+        } else {
+          const { data, error } = await insertInventoryRow(sharedFridgeId, {
+            name: item.name,
+            category: item.category || '🏷️ Прочее',
+            measure: item.measure,
+            quantity: item.quantity,
+            expiryDate,
+            shelfLife,
+            autoFilled: true
+          });
+          if (error || !data) {
+            showNotification(`Не удалось перенести: ${item.name}`);
+            continue;
+          }
+          localPantry = [...localPantry, mapInventoryRowToPantryItem(data)];
+        }
+      } else if (existingPantryItem) {
         const addedQty = convertQuantity(item.quantity, item.measure, existingPantryItem.measure);
-        const updatedPantryItems = pantryItems.map(pantryItem =>
+        localPantry = localPantry.map((pantryItem) =>
           pantryItem.name === item.name
             ? { ...pantryItem, quantity: pantryItem.quantity + addedQty }
             : pantryItem
         );
-        setPantryItems(updatedPantryItems);
       } else {
-        // Добавляем новый продукт в кладовую
         const newPantryItem = {
           id: Date.now() + Math.random(),
           name: item.name,
           category: item.category,
           measure: item.measure,
           quantity: item.quantity,
-          expiryDate: expiryDate,
+          expiryDate,
           addedAt: new Date()
         };
-        setPantryItems(prev => [...prev, newPantryItem]);
+        localPantry = [...localPantry, newPantryItem];
       }
-    });
+    }
 
-    // Удаляем отмеченные товары из списка покупок
-    setShoppingItems(prev => prev.filter(item => !item.completed));
-    
+    setPantryItems(localPantry);
+
+    setShoppingItems((prev) => prev.filter((item) => !item.completed));
     showNotification(`${completedItems.length} товаров перенесено в кладовую`);
   };
 
@@ -2691,9 +3014,10 @@ const OlivierApp = () => {
             </button>
           </div>
         </div>
-        {sharedFridgeId && (
-          <span className="text-xs text-blue-600 font-medium text-center block">
-            Общая кладовая
+        {sharedFridgeId && fridgeDisplayName && (
+          <span className="text-xs text-blue-600 font-medium text-center block px-2">
+            {fridgeIsPersonal ? '🏠 ' : '👨‍👩‍👧 '}
+            {fridgeDisplayName}
           </span>
         )}
       </div>
@@ -2713,7 +3037,7 @@ const OlivierApp = () => {
               </button>
             </div>
             <p className="text-sm text-gray-600 mb-4">
-              Одна кладовая, покупки, избранное и свои рецепты для всех, кто вошёл по коду. Изменения подтягиваются с сервера каждые ~20 секунд и при возврате в приложение.
+              Продукты в кладовой хранятся в облаке (таблица inventory): видны всем в группе. Изменения приходят в реальном времени и дублируются опросом ~20 с при возврате в приложение.
             </p>
             {!supabase || !telegramUserId ? (
               <div className="space-y-3 text-sm text-orange-700 bg-orange-50 rounded-xl p-4">
@@ -2762,6 +3086,18 @@ const OlivierApp = () => {
               </div>
             ) : (
               <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Название холодильника для семьи</label>
+                  <input
+                    type="text"
+                    value={createFridgeNameDraft}
+                    onChange={(e) => setCreateFridgeNameDraft(e.target.value)}
+                    placeholder="Например: Дом на Мира"
+                    className="w-full p-3 border border-gray-200 rounded-xl"
+                    maxLength={80}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Будет видно всем, кто вошёл по коду. Можно оставить пустым — тогда «Наша кладовая».</p>
+                </div>
                 <button
                   type="button"
                   onClick={createSharedFridge}
@@ -2930,8 +3266,15 @@ const OlivierApp = () => {
                             <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
                           </button>
                           <button
-                            onClick={() => {
-                              setPantryItems(prev => prev.filter(p => p.id !== item.id));
+                            onClick={async () => {
+                              if (usesCloudInventory && item.id) {
+                                const { error } = await deleteInventoryRow(item.id);
+                                if (error) {
+                                  showNotification('Не удалось удалить продукт');
+                                  return;
+                                }
+                              }
+                              setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
                               showNotification(`${item.name} удален из кладовой`);
                             }}
                             className="text-red-500 hover:text-red-700 transition-colors"
@@ -3993,21 +4336,40 @@ const OlivierApp = () => {
               )}
 
                 <button
-                onClick={() => {
+                onClick={async () => {
                   if (currentTab === 'pantry') {
-                    setPantryItems(prev => prev.map(item => 
-                      item.id === editingItem.id 
-                        ? {
-                            ...item,
-                            name: editFormData.name,
-                            quantity: Number(editFormData.quantity) || item.quantity,
-                            measure: editFormData.measure || item.measure,
-                            category: editFormData.category || item.category || '🏷️ Прочее',
-                            expiryDate: new Date(editFormData.expiryDate),
-                            autoFilled: false
-                          }
-                        : item
-                    ));
+                    const expRaw = editFormData.expiryDate ? new Date(editFormData.expiryDate) : null;
+                    const exp = expRaw && !Number.isNaN(expRaw.getTime()) ? expRaw : null;
+                    if (usesCloudInventory && editingItem?.id) {
+                      const { data, error } = await updateInventoryRow(editingItem.id, {
+                        name: editFormData.name,
+                        quantity: Number(editFormData.quantity) || editingItem.quantity,
+                        measure: editFormData.measure || editingItem.measure,
+                        category: editFormData.category || editingItem.category || '🏷️ Прочее',
+                        expiryDate: exp,
+                        autoFilled: false
+                      });
+                      if (error || !data) {
+                        showNotification('Не удалось сохранить');
+                        return;
+                      }
+                      const mapped = mapInventoryRowToPantryItem(data);
+                      setPantryItems((prev) => prev.map((item) => (item.id === editingItem.id ? mapped : item)));
+                    } else {
+                      setPantryItems((prev) => prev.map((item) =>
+                        item.id === editingItem.id
+                          ? {
+                              ...item,
+                              name: editFormData.name,
+                              quantity: Number(editFormData.quantity) || item.quantity,
+                              measure: editFormData.measure || item.measure,
+                              category: editFormData.category || item.category || '🏷️ Прочее',
+                              expiryDate: exp ?? item.expiryDate,
+                              autoFilled: false
+                            }
+                          : item
+                      ));
+                    }
                   } else if (currentTab === 'shopping') {
                     setShoppingItems(prev => prev.map(item => 
                       item.id === editingItem.id 
