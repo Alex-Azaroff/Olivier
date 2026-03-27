@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Heart, Home, Book, BookOpen, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, Share2, ScanLine, Loader2, Upload } from 'lucide-react';
+import { Heart, Home, Book, BookOpen, ShoppingCart, User, Plus, Edit3, Trash2, Calendar, Check, X, Share2, ScanLine, Loader2, Upload, ChevronDown } from 'lucide-react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { NotFoundException } from '@zxing/library';
 import { supabase } from './src/supabaseClient';
@@ -745,6 +745,26 @@ const OlivierApp = () => {
     }
   };
 
+  const getLinkedSharedKey = (userId) => `olivier_linked_shared_${userId || 'anon'}`;
+  const loadLinkedSharedFridgeId = (userId) => {
+    try {
+      if (!userId) return null;
+      return localStorage.getItem(getLinkedSharedKey(userId)) || null;
+    } catch {
+      return null;
+    }
+  };
+  const persistLinkedSharedFridgeId = (userId, fridgeId) => {
+    try {
+      if (!userId) return;
+      const k = getLinkedSharedKey(userId);
+      if (fridgeId) localStorage.setItem(k, fridgeId);
+      else localStorage.removeItem(k);
+    } catch (e) {
+      console.error('persist linked shared', e);
+    }
+  };
+
   const [currentTab, setCurrentTab] = useState('pantry');
   const [pantrySubTab, setPantrySubTab] = useState('products'); // 'products' | 'meals'
   const contentRef = useRef(null);
@@ -826,6 +846,13 @@ const OlivierApp = () => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
+  /** Личная группа пользователя (для переключателя кладовых) */
+  const [personalFridgeRow, setPersonalFridgeRow] = useState(null);
+  /** Последняя известная общая кладовая — можно вернуться без кода */
+  const [linkedSharedFridgeId, setLinkedSharedFridgeId] = useState(null);
+  const [linkedSharedFridgeName, setLinkedSharedFridgeName] = useState('');
+  const [fridgeSwitchOpen, setFridgeSwitchOpen] = useState(false);
+  const [fridgeSwitchBusy, setFridgeSwitchBusy] = useState(false);
   const lastFridgeRemoteAtRef = useRef(null);
   const skipNextFridgePollRef = useRef(false);
 
@@ -869,6 +896,25 @@ const OlivierApp = () => {
 
   /** Кладовая в Supabase: только таблица inventory, не JSON в state */
   const usesCloudInventory = Boolean(supabase && telegramUserId && sharedFridgeId);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!linkedSharedFridgeId || !supabase) {
+      setLinkedSharedFridgeName('');
+      return undefined;
+    }
+    (async () => {
+      const { data } = await supabase
+        .from('fridge_groups')
+        .select('name')
+        .eq('id', linkedSharedFridgeId)
+        .maybeSingle();
+      if (!cancelled) setLinkedSharedFridgeName(data?.name || 'Семейная кладовая');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [linkedSharedFridgeId, supabase]);
 
   const fetchPantryInventory = async (fridgeId) => {
     if (!supabase || !fridgeId) return [];
@@ -996,15 +1042,36 @@ const OlivierApp = () => {
       }
 
       try {
-        const { data: membership, error: memErr } = await supabase
-          .from('fridge_members')
-          .select('fridge_id')
+        const [{ data: membership, error: memErr }, { data: personalGrpEarly }] = await Promise.all([
+          supabase.from('fridge_members').select('fridge_id').eq('telegram_user_id', telegramUserId).maybeSingle(),
+          supabase
+            .from('fridge_groups')
+            .select('id, name')
+            .eq('created_by_telegram_id', telegramUserId)
+            .eq('is_personal', true)
+            .maybeSingle()
+        ]);
+        const { data: usEarly } = await supabase
+          .from('user_states')
+          .select('state')
           .eq('telegram_user_id', telegramUserId)
           .maybeSingle();
 
         if (memErr) console.error('fridge_members load', memErr);
 
         if (cancelled) return;
+
+        if (personalGrpEarly?.id && !cancelled) {
+          setPersonalFridgeRow({
+            id: personalGrpEarly.id,
+            name: personalGrpEarly.name || 'Личная кладовая'
+          });
+        }
+        const storedLinked =
+          usEarly?.state && typeof usEarly.state === 'object' ? usEarly.state.linked_shared_fridge_id : null;
+        const linkedFallback =
+          loadLinkedSharedFridgeId(telegramUserId) ||
+          (typeof storedLinked === 'string' && storedLinked ? storedLinked : null);
 
         const applyNonPantryFromHydrate = (h) => {
           if (!h) return;
@@ -1045,6 +1112,12 @@ const OlivierApp = () => {
             setSharedInviteCode(grp?.invite_code || null);
             setFridgeDisplayName(grp?.name || 'Кладовая');
             setFridgeIsPersonal(Boolean(grp?.is_personal));
+            if (!grp?.is_personal) {
+              setLinkedSharedFridgeId(fid);
+              persistLinkedSharedFridgeId(telegramUserId, fid);
+            } else if (linkedFallback) {
+              setLinkedSharedFridgeId(linkedFallback);
+            }
           }
 
           const { data: fsRow, error: fsErr } = await supabase
@@ -1149,6 +1222,13 @@ const OlivierApp = () => {
             setSharedInviteCode(personalGrp.invite_code || null);
             setFridgeDisplayName(personalGrp.name || 'Личная кладовая');
             setFridgeIsPersonal(true);
+            setPersonalFridgeRow({
+              id: personalGrp.id,
+              name: personalGrp.name || 'Личная кладовая'
+            });
+            if (linkedFallback) {
+              setLinkedSharedFridgeId(linkedFallback);
+            }
 
             if (legacyPantry.length) {
               await migrateLegacyPantryRows(personalGrp.id, legacyPantry);
@@ -1235,6 +1315,7 @@ const OlivierApp = () => {
         saveLocalState(stateToSave, telegramUserId, null);
 
         if (supabase && telegramUserId) {
+          stateToSave.linked_shared_fridge_id = linkedSharedFridgeId ?? null;
           await supabase.from('user_states').upsert(
             {
               telegram_user_id: telegramUserId,
@@ -1259,7 +1340,8 @@ const OlivierApp = () => {
     favoriteRecipes,
     favoriteMeals,
     customRecipes,
-    preparedMeals
+    preparedMeals,
+    linkedSharedFridgeId
   ]);
 
   // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
@@ -1340,6 +1422,81 @@ const OlivierApp = () => {
   const showNotification = (message, durationMs = 1000) => {
     setNotification(message);
     setTimeout(() => setNotification(''), durationMs);
+  };
+
+  const switchToFridgeId = async (targetId) => {
+    if (!supabase || !telegramUserId || !targetId) return;
+    if (targetId === sharedFridgeId) {
+      setFridgeSwitchOpen(false);
+      return;
+    }
+    setFridgeSwitchBusy(true);
+    try {
+      const { error: uErr } = await supabase
+        .from('fridge_members')
+        .update({ fridge_id: targetId })
+        .eq('telegram_user_id', telegramUserId);
+      if (uErr) {
+        console.error(uErr);
+        showNotification('Не удалось переключить кладовую');
+        return;
+      }
+      const { data: grp } = await supabase
+        .from('fridge_groups')
+        .select('invite_code, name, is_personal')
+        .eq('id', targetId)
+        .maybeSingle();
+      if (!grp?.id) {
+        showNotification('Кладовая недоступна');
+        return;
+      }
+      setSharedFridgeId(targetId);
+      setSharedInviteCode(grp.invite_code || null);
+      setFridgeDisplayName(grp.name || 'Кладовая');
+      setFridgeIsPersonal(Boolean(grp.is_personal));
+
+      const { data: fsRow, error: fsErr } = await supabase
+        .from('fridge_states')
+        .select('state, updated_at')
+        .eq('fridge_id', targetId)
+        .maybeSingle();
+      if (fsErr) console.error('fridge_states load', fsErr);
+      const rawState = fsRow?.state && typeof fsRow.state === 'object' ? fsRow.state : {};
+      const stateKeys = Object.keys(rawState);
+      const h = stateKeys.length > 0 ? hydrateAppState(rawState) : null;
+      if (h && stateKeys.length > 0) {
+        setPreparedMeals(h.preparedMeals || []);
+        setShoppingItems(h.shoppingItems || []);
+        setFavoriteProducts(h.favoriteProducts || []);
+        setFavoriteRecipes(h.favoriteRecipes || []);
+        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
+        setCustomRecipes(h.customRecipes || []);
+      } else {
+        const lf = loadLocalState(telegramUserId, targetId);
+        if (lf) {
+          if (lf.preparedMeals) setPreparedMeals(lf.preparedMeals);
+          if (lf.shoppingItems) setShoppingItems(lf.shoppingItems);
+          if (lf.favoriteProducts) setFavoriteProducts(lf.favoriteProducts);
+          if (lf.favoriteRecipes) setFavoriteRecipes(lf.favoriteRecipes);
+          if (lf.favoriteMeals) setFavoriteMeals(lf.favoriteMeals);
+          if (lf.customRecipes) setCustomRecipes(lf.customRecipes);
+        }
+      }
+      if (fsRow?.updated_at) lastFridgeRemoteAtRef.current = fsRow.updated_at;
+
+      const inv = await fetchPantryInventory(targetId);
+      setPantryItems(inv);
+
+      if (!grp.is_personal) {
+        setLinkedSharedFridgeId(targetId);
+        persistLinkedSharedFridgeId(telegramUserId, targetId);
+      }
+      skipNextFridgePollRef.current = true;
+      setFridgeSwitchOpen(false);
+      showNotification(grp.name || (grp.is_personal ? 'Личная кладовая' : 'Общая кладовая'));
+    } finally {
+      setFridgeSwitchBusy(false);
+    }
   };
 
   const createSharedFridge = async () => {
@@ -1456,6 +1613,8 @@ const OlivierApp = () => {
         skipNextFridgePollRef.current = true;
         const inv = await fetchPantryInventory(newId);
         setPantryItems(inv);
+        setLinkedSharedFridgeId(newId);
+        persistLinkedSharedFridgeId(telegramUserId, newId);
         setCreateFridgeNameDraft('');
         showNotification('Создан код приглашения — отправьте его семье');
         return;
@@ -1542,6 +1701,8 @@ const OlivierApp = () => {
       setSharedInviteCode(code);
       setFridgeDisplayName(gMeta?.name || 'Кладовая');
       setFridgeIsPersonal(false);
+      setLinkedSharedFridgeId(group.id);
+      persistLinkedSharedFridgeId(telegramUserId, group.id);
       setJoinCodeDraft('');
       showNotification('Вы присоединились к общей кладовой');
     } finally {
@@ -1562,6 +1723,8 @@ const OlivierApp = () => {
     setShareBusy(true);
     const fid = sharedFridgeId;
     try {
+      persistLinkedSharedFridgeId(telegramUserId, fid);
+      setLinkedSharedFridgeId(fid);
       await supabase.from('fridge_members').delete().eq('telegram_user_id', telegramUserId);
       const { count, error: cErr } = await supabase
         .from('fridge_members')
@@ -2963,6 +3126,14 @@ const OlivierApp = () => {
     showNotification(`${product.name} добавлен в список покупок`);
   };
 
+  const canQuickSwitchFridge = Boolean(
+    supabase &&
+      telegramUserId &&
+      personalFridgeRow?.id &&
+      linkedSharedFridgeId &&
+      linkedSharedFridgeId !== personalFridgeRow.id
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       {isLoadingState && (
@@ -3008,15 +3179,30 @@ const OlivierApp = () => {
               </button>
             ) : null}
           </div>
-          <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1 truncate">
-            {currentTab === 'pantry' && (fridgeDisplayName || 'Кладовая')}
-            {currentTab === 'favorites' && 'Избранное'}
-            {currentTab === 'recipes' && 'Рецепты'}
-            {currentTab === 'shopping' && 'Покупки'}
-            {hasExpiredItems && currentTab === 'pantry' && (
-              <span className="ml-2 text-orange-500">!</span>
-            )}
-          </h1>
+          {currentTab === 'pantry' && canQuickSwitchFridge ? (
+            <button
+              type="button"
+              onClick={() => setFridgeSwitchOpen(true)}
+              className="flex-1 min-w-0 flex items-center justify-center gap-0.5 text-lg font-semibold leading-tight px-1 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors"
+              aria-haspopup="dialog"
+              aria-expanded={fridgeSwitchOpen}
+              aria-label="Выбрать кладовую"
+            >
+              <span className="truncate capitalize">{fridgeDisplayName || 'Кладовая'}</span>
+              {hasExpiredItems && <span className="text-orange-500 shrink-0">!</span>}
+              <ChevronDown className="shrink-0 w-5 h-5 text-gray-500" strokeWidth={2.5} aria-hidden />
+            </button>
+          ) : (
+            <h1 className="flex-1 min-w-0 text-center text-lg font-semibold capitalize leading-tight px-1 truncate">
+              {currentTab === 'pantry' && (fridgeDisplayName || 'Кладовая')}
+              {currentTab === 'favorites' && 'Избранное'}
+              {currentTab === 'recipes' && 'Рецепты'}
+              {currentTab === 'shopping' && 'Покупки'}
+              {hasExpiredItems && currentTab === 'pantry' && (
+                <span className="ml-2 text-orange-500">!</span>
+              )}
+            </h1>
+          )}
           <div className="shrink-0 w-12 flex items-center justify-center">
             <button
               type="button"
@@ -3038,6 +3224,86 @@ const OlivierApp = () => {
           </div>
         </div>
       </div>
+
+      {fridgeSwitchOpen && canQuickSwitchFridge && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-[58] flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => !fridgeSwitchBusy && setFridgeSwitchOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Кладовые"
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md shadow-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lg font-bold">Кладовая</h2>
+              <button
+                type="button"
+                className="text-gray-500 p-1"
+                onClick={() => !fridgeSwitchBusy && setFridgeSwitchOpen(false)}
+                aria-label="Закрыть"
+              >
+                <X size={22} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">Быстрое переключение между личной и общей</p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={fridgeSwitchBusy}
+                onClick={() => switchToFridgeId(personalFridgeRow.id)}
+                className={`w-full text-left rounded-xl border px-4 py-3 flex items-center gap-2 transition-colors ${
+                  sharedFridgeId === personalFridgeRow.id
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:bg-gray-50'
+                } ${fridgeSwitchBusy ? 'opacity-60' : ''}`}
+              >
+                <span className="text-lg" aria-hidden>
+                  🏠
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium block truncate">{personalFridgeRow.name}</span>
+                  <span className="text-xs text-gray-500">Личная</span>
+                </span>
+                {sharedFridgeId === personalFridgeRow.id && (
+                  <Check className="shrink-0 text-blue-500" size={20} />
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={fridgeSwitchBusy}
+                onClick={() => switchToFridgeId(linkedSharedFridgeId)}
+                className={`w-full text-left rounded-xl border px-4 py-3 flex items-center gap-2 transition-colors ${
+                  sharedFridgeId === linkedSharedFridgeId
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:bg-gray-50'
+                } ${fridgeSwitchBusy ? 'opacity-60' : ''}`}
+              >
+                <span className="text-lg" aria-hidden>
+                  👨‍👩‍👧
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium block truncate">
+                    {linkedSharedFridgeName || 'Семейная кладовая'}
+                  </span>
+                  <span className="text-xs text-gray-500">Общая</span>
+                </span>
+                {sharedFridgeId === linkedSharedFridgeId && (
+                  <Check className="shrink-0 text-blue-500" size={20} />
+                )}
+              </button>
+            </div>
+            {fridgeSwitchBusy && (
+              <div className="mt-3 flex items-center justify-center gap-2 text-sm text-gray-600">
+                <Loader2 className="animate-spin" size={18} />
+                Переключение…
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showShareModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]" onClick={() => setShowShareModal(false)}>
