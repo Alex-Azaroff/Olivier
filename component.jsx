@@ -421,7 +421,7 @@ const AuthModal = ({ isOpen, onClose, onLogin, onRegister }) => {
 };
 
 // Компонент карточки рецепта
-const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite, deleteTitle }) => {
+const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite, deleteTitle, prioritizeAvailableIngredients = false }) => {
   const getIngredientStatus = (ingredient) => {
     const pantryItem = pantryItems.find(item => item.name === ingredient.name);
     if (!pantryItem || pantryItem.quantity === 0) return {
@@ -447,6 +447,16 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
     const status = getIngredientStatus(ingredient);
     return status.status === 'missing' || status.status === 'partial';
   });
+
+  const ingredientsForPreview = (() => {
+    if (!prioritizeAvailableIngredients) return recipe.ingredients;
+    const statusRank = { available: 0, partial: 1, missing: 2 };
+    return [...recipe.ingredients].sort((a, b) => {
+      const aRank = statusRank[getIngredientStatus(a).status] ?? 99;
+      const bRank = statusRank[getIngredientStatus(b).status] ?? 99;
+      return aRank - bRank;
+    });
+  })();
 
   return (
     <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer"
@@ -497,8 +507,8 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
           {/* Ингредиенты (не более 5 в карточке) */}
           {(() => {
             const MAX_VISIBLE = 5;
-            const visible = recipe.ingredients.slice(0, MAX_VISIBLE);
-            const hiddenCount = recipe.ingredients.length - MAX_VISIBLE;
+            const visible = ingredientsForPreview.slice(0, MAX_VISIBLE);
+            const hiddenCount = ingredientsForPreview.length - MAX_VISIBLE;
             return (
               <div className="flex flex-wrap gap-1 overflow-hidden max-h-[52px]">
                 {visible.map((ingredient, index) => {
@@ -3391,6 +3401,7 @@ const OlivierApp = () => {
                           recipe={recipe}
                           pantryItems={pantryItems}
                           isCustom={false}
+                          prioritizeAvailableIngredients={true}
                           onAddToCart={addRecipeToCart}
                           onToggleFavorite={toggleFavoriteRecipe}
                           onViewDetails={(recipe) => {
