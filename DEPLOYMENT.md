@@ -4,19 +4,18 @@ Project: Olivier
 
 ## Стабильные версии
 
-| Версия | Git тег | Vercel деплой | Описание |
-|--------|---------|---------------|----------|
-| **v3 (stable)** | `v3-stable` | https://olivier-34m079s6g-alex-azaroffs-projects.vercel.app | ✅ Текущая рабочая версия |
+| Версия | Git тег | Описание |
+|--------|---------|----------|
+| **Текущая stable** | **`v3.5-stable`**, `v-stable` | Кладовая в Supabase (`inventory`), имя холодильника, realtime, без демо-продуктов из PRODUCTS_DB |
+| Архив | `v3.4-stable`, `v3-stable`, … | Предыдущие отметки |
 
-Чтобы вернуть v3 в продакшн:
+Чтобы получить код текущей стабильной версии:
 ```
-vercel promote olivier-34m079s6g-alex-azaroffs-projects.vercel.app --yes
+git fetch origin && git checkout v3.5-stable
 ```
+(или `git checkout v-stable` — тот же коммит.)
 
-Чтобы получить код v3:
-```
-git checkout v3-stable
-```
+Перед деплоем примените SQL-миграцию `supabase/migrations/20260328120000_inventory_and_fridge_name.sql` и при необходимости включите Realtime для таблицы `inventory` в Supabase.
 
 ---
 
