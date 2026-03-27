@@ -1924,7 +1924,7 @@ const OlivierApp = () => {
   // Функции для работы с рецептами
   const normalizeIngredientName = (s) => {
     try {
-      return String(s).toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+      return String(s).toLowerCase().normalize('NFC').replace(/[^а-яёa-z0-9]+/gi, ' ').trim();
     } catch {
       return String(s).toLowerCase().trim();
     }
@@ -1932,9 +1932,24 @@ const OlivierApp = () => {
 
   const findPantryItemForIngredient = (ingredientName) => {
     const norm = normalizeIngredientName(ingredientName);
+    const ingWords = norm.split(' ').filter(w => w.length >= 3);
+
     return pantryItems.find(item => {
       const itemNorm = normalizeIngredientName(item.name);
-      return itemNorm === norm || itemNorm.includes(norm) || norm.includes(itemNorm);
+      // 1. Точное совпадение
+      if (itemNorm === norm) return true;
+      // 2. Одна строка содержит другую целиком
+      if (itemNorm.includes(norm) || norm.includes(itemNorm)) return true;
+      // 3. Пересечение слов с учётом русской морфологии:
+      //    слова считаются одинаковыми если совпадают первые 4+ символа
+      const pantryWords = itemNorm.split(' ').filter(w => w.length >= 3);
+      return ingWords.some(iw =>
+        pantryWords.some(pw => {
+          if (iw === pw) return true;
+          const prefixLen = Math.min(iw.length, pw.length, 5);
+          return prefixLen >= 4 && iw.slice(0, prefixLen) === pw.slice(0, prefixLen);
+        })
+      );
     });
   };
 
@@ -2503,7 +2518,7 @@ const OlivierApp = () => {
                 type="button"
                 onClick={openRecipeLibrary}
                 className="p-2 rounded-xl transition-colors text-gray-400 hover:bg-gray-50 hover:text-gray-700"
-                title="Библиотека рецептов"
+                title="Книга рецептов"
                 aria-label="Открыть библиотеку рецептов"
               >
                 <BookOpen size={22} />
@@ -3219,24 +3234,38 @@ const OlivierApp = () => {
               {/* Возможные рецепты */}
               <div className="mb-6">
                 <h2 className="text-xl font-bold mb-4">Возможные рецепты</h2>
-                <div className="space-y-4">
-                  {getAvailableRecipes().map(recipe => (
-                    <RecipeCard 
-                      key={recipe.id} 
-                      recipe={recipe} 
-                      pantryItems={pantryItems}
-                      isCustom={false}
-                      onAddToCart={addRecipeToCart}
-                      onToggleFavorite={toggleFavoriteRecipe}
-                      onViewDetails={(recipe) => {
-                        setSelectedRecipe(recipe);
-                        setShowRecipeModal(true);
-                      }}
-                      onAddToMyRecipes={addRecipeToMy}
-                      isFavorite={favoriteRecipes.some(fav => fav.id === recipe.id)}
-                    />
-                  ))}
-                </div>
+                {(() => {
+                  const available = getAvailableRecipes();
+                  if (available.length === 0) {
+                    return (
+                      <div className="text-center text-gray-400 py-6 text-sm">
+                        {pantryItems.length === 0
+                          ? 'Добавьте продукты в кладовую — здесь появятся подходящие рецепты'
+                          : 'Нет рецептов, для которых уже есть 2+ продукта в кладовой'}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="space-y-4">
+                      {available.map(recipe => (
+                        <RecipeCard
+                          key={recipe.id}
+                          recipe={recipe}
+                          pantryItems={pantryItems}
+                          isCustom={false}
+                          onAddToCart={addRecipeToCart}
+                          onToggleFavorite={toggleFavoriteRecipe}
+                          onViewDetails={(recipe) => {
+                            setSelectedRecipe(recipe);
+                            setShowRecipeModal(true);
+                          }}
+                          onAddToMyRecipes={addRecipeToMy}
+                          isFavorite={favoriteRecipes.some(fav => fav.id === recipe.id)}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Мои рецепты */}
@@ -3594,7 +3623,7 @@ const OlivierApp = () => {
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <BookOpen size={20} className="text-gray-700" />
-                <h2 className="text-lg font-bold">Библиотека рецептов</h2>
+                <h2 className="text-lg font-bold">Книга рецептов</h2>
               </div>
               <button onClick={closeRecipeLibrary} className="text-gray-500">
                 <X size={22} />
