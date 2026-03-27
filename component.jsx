@@ -1838,9 +1838,9 @@ const OlivierApp = () => {
   }, [telegramUserId]);
 
   useEffect(() => {
-    if (!showRecipeLibrary) return;
+    if (!showRecipeLibrary && currentTab !== 'recipes') return;
     loadRecipeLibrary();
-  }, [showRecipeLibrary, loadRecipeLibrary]);
+  }, [showRecipeLibrary, currentTab, loadRecipeLibrary]);
 
   const toggleLibraryFavorite = async (recipe) => {
     if (!supabase || !telegramUserId) {
@@ -1916,10 +1916,7 @@ const OlivierApp = () => {
     }
   }, [telegramUserId]);
 
-  useEffect(() => {
-    if (currentTab !== 'recipes') return;
-    loadMyLibraryFavorites();
-  }, [currentTab, loadMyLibraryFavorites]);
+  // myLibraryFavorites теперь деривируется из recipeLibrary — отдельная загрузка не нужна
 
   // Функции для работы с рецептами
   // Таблица синонимов — ключ: нормализованное название из рецепта, значение: нормализованные синонимы из кладовой
@@ -1988,18 +1985,19 @@ const OlivierApp = () => {
   };
 
   const getAvailableRecipes = () => {
-    const allRecipes = [
-      ...RECIPES_DB,
-      ...myLibraryFavorites,
-      ...customRecipes
-    ];
-    // deduplicate by id
+    // Единый источник: все рецепты из Supabase + пользовательские рецепты
+    // Если Supabase ещё не загружен — используем локальный RECIPES_DB как фолбэк
+    const catalogRecipes = recipeLibrary.length > 0 ? recipeLibrary : RECIPES_DB;
+    const allRecipes = [...catalogRecipes, ...customRecipes];
+
+    // дедупликация по id
     const seen = new Set();
     const unique = allRecipes.filter(r => {
       if (seen.has(r.id)) return false;
       seen.add(r.id);
       return true;
     });
+
     return unique.filter(recipe => {
       if (!Array.isArray(recipe.ingredients)) return false;
       const availableCount = recipe.ingredients.filter(ingredient => {
@@ -2008,7 +2006,7 @@ const OlivierApp = () => {
           item => item.name === ingredient.name && Number(item.quantity) > 0
         );
         if (exact) return true;
-        // нечёткое совпадение (для разных форм слов)
+        // нечёткое совпадение (синонимы, ё/е, морфология)
         const fuzzy = findPantryItemForIngredient(ingredient.name);
         return fuzzy && Number(fuzzy.quantity) > 0;
       }).length;
@@ -3298,13 +3296,13 @@ const OlivierApp = () => {
                 {(() => {
                   const available = getAvailableRecipes();
                   // eslint-disable-next-line no-console
-                  console.log('[Возможные рецепты] pantryItems:', pantryItems.length, 'myLibraryFavorites:', myLibraryFavorites.length, 'customRecipes:', customRecipes.length, 'found:', available.length, available.map(r=>r.name));
+                  console.log('[Возможные рецепты] pantryItems:', pantryItems.length, 'recipeLibrary:', recipeLibrary.length, 'customRecipes:', customRecipes.length, 'found:', available.length, available.map(r=>r.name));
                   return null;
                 })()}
                 <h2 className="text-xl font-bold mb-4">
                   Возможные рецепты
                   <span className="text-sm font-normal text-gray-400 ml-2">
-                    (кладовая: {pantryItems.length} пр., каталог: {myLibraryFavorites.length} рец.)
+                    (кладовая: {pantryItems.length} пр., каталог: {recipeLibrary.length} рец.)
                   </span>
                 </h2>
                 {(() => {
@@ -3353,7 +3351,7 @@ const OlivierApp = () => {
                   </button>
                 </div>
                 <div className="space-y-4">
-                  {myLibraryFavorites.map((recipe) => (
+                  {recipeLibrary.filter(r => libraryFavoriteIds.has(r.id)).map((recipe) => (
                     <RecipeCard
                       key={`fav-${recipe.id}`}
                       recipe={recipe}
