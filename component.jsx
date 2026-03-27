@@ -3476,10 +3476,11 @@ const OlivierApp = () => {
           {((currentTab === 'pantry' && pantrySubTab === 'products') || currentTab === 'shopping') && (
             <button
               onClick={() => handleBarcodeScan(currentTab === 'shopping' ? 'shopping' : 'form')}
-              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
+              className="fixed bottom-20 right-20 bg-gray-700 text-white px-3 py-3 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40 flex items-center gap-2"
               title="Сканировать штрихкод"
             >
-              <ScanLine size={24} />
+              <ScanLine size={20} />
+              <span className="text-sm font-semibold">Штрих-код</span>
             </button>
           )}
         </>
