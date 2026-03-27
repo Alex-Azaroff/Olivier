@@ -421,7 +421,7 @@ const AuthModal = ({ isOpen, onClose, onLogin, onRegister }) => {
 };
 
 // Компонент карточки рецепта
-const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite }) => {
+const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite, deleteTitle }) => {
   const getIngredientStatus = (ingredient) => {
     const pantryItem = pantryItems.find(item => item.name === ingredient.name);
     if (!pantryItem || pantryItem.quantity === 0) return {
@@ -549,11 +549,11 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
               <Plus size={18} />
             </button>
           )}
-          {isCustom && onDelete && (
+          {onDelete && (
             <button
-              onClick={() => onDelete(recipe.id)}
+              onClick={() => onDelete(recipe)}
               className="text-gray-400 hover:text-red-500"
-              title="Удалить рецепт"
+              title={deleteTitle || 'Удалить рецепт'}
             >
               <Trash2 size={18} />
             </button>
@@ -3430,6 +3430,8 @@ const OlivierApp = () => {
                         setSelectedRecipe(r);
                         setShowRecipeModal(true);
                       }}
+                      onDelete={(r) => toggleLibraryFavorite(r)}
+                      deleteTitle="Убрать из моей книги"
                       isFavorite={true}
                     />
                   ))}
@@ -3446,7 +3448,8 @@ const OlivierApp = () => {
                         setShowRecipeModal(true);
                       }}
                       onEdit={editCustomRecipe}
-                      onDelete={deleteCustomRecipe}
+                      onDelete={(r) => deleteCustomRecipe(r.id)}
+                      deleteTitle="Удалить рецепт"
                       isFavorite={favoriteRecipes.some(fav => fav.id === recipe.id)}
                     />
                   ))}
