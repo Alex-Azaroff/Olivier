@@ -18,8 +18,18 @@ const MEAL_DEFAULT_PORTIONS_BY_CATEGORY = {
 };
 const defaultMealPortionsForCategory = (cat) => MEAL_DEFAULT_PORTIONS_BY_CATEGORY[cat] ?? 3;
 
-/** Подпись стабильного релиза (шапка и окно «Семейный холодильник») */
-const APP_RELEASE_LABEL = 'Стабильная версия 3.5';
+/** Username бота без @ — для ссылок t.me/.../startapp= (можно задать VITE_TELEGRAM_BOT_USERNAME) */
+const TELEGRAM_BOT_USERNAME =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_TELEGRAM_BOT_USERNAME) || 'ZayKypi_Bot';
+
+const buildFridgeInviteTelegramLink = (inviteCode) => {
+  const code = String(inviteCode || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (code.length < 4) return '';
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=join_${code}`;
+};
 
 // Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
 // 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
@@ -961,6 +971,10 @@ const OlivierApp = () => {
   const [createFridgeNameDraft, setCreateFridgeNameDraft] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  /** id → { id, invite_code, name, is_personal } для ЛК */
+  const [cabinetFridgeGroups, setCabinetFridgeGroups] = useState({});
+  /** Приглашение по ссылке t.me/...?startapp=join_CODE */
+  const [deeplinkJoinCode, setDeeplinkJoinCode] = useState(null);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   /** Личная группа пользователя (для переключателя кладовых) */
@@ -1033,6 +1047,34 @@ const OlivierApp = () => {
       cancelled = true;
     };
   }, [linkedSharedFridgeId, supabase]);
+
+  useEffect(() => {
+    if (!showAccountModal || !supabase) {
+      if (!showAccountModal) setCabinetFridgeGroups({});
+      return undefined;
+    }
+    const ids = [...new Set([personalFridgeRow?.id, linkedSharedFridgeId, sharedFridgeId].filter(Boolean))];
+    if (ids.length === 0) {
+      setCabinetFridgeGroups({});
+      return undefined;
+    }
+    let cancelled = false;
+    supabase
+      .from('fridge_groups')
+      .select('id, invite_code, name, is_personal')
+      .in('id', ids)
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        const m = {};
+        (data || []).forEach((r) => {
+          m[r.id] = r;
+        });
+        setCabinetFridgeGroups(m);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showAccountModal, supabase, personalFridgeRow?.id, linkedSharedFridgeId, sharedFridgeId]);
 
   const fetchPantryInventory = async (fridgeId) => {
     if (!supabase || !fridgeId) return [];
@@ -1849,8 +1891,11 @@ const OlivierApp = () => {
     }
   };
 
-  const joinSharedFridge = async () => {
-    const code = joinCodeDraft.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const joinSharedFridgeWithCode = async (codeRaw) => {
+    const code = String(codeRaw ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
     if (code.length < 4) {
       showNotification('Введите код приглашения');
       return;
@@ -1932,6 +1977,28 @@ const OlivierApp = () => {
       setShareBusy(false);
     }
   };
+
+  const joinSharedFridge = async () => {
+    await joinSharedFridgeWithCode(joinCodeDraft);
+  };
+
+  useEffect(() => {
+    const sp = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+    if (!sp?.startsWith('join_')) return;
+    const code = sp
+      .slice(5)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    if (code.length >= 4) setDeeplinkJoinCode(code);
+  }, []);
+
+  useEffect(() => {
+    if (!deeplinkJoinCode || isLoadingState || !telegramUserId || !supabase) return;
+    const code = deeplinkJoinCode;
+    setDeeplinkJoinCode(null);
+    joinSharedFridgeWithCode(code);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- разовый ввод по ссылке после загрузки состояния
+  }, [deeplinkJoinCode, isLoadingState, telegramUserId, supabase]);
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
@@ -3340,6 +3407,10 @@ const OlivierApp = () => {
     }
   };
 
+  const cabinetFridgeIdsOrdered = [
+    ...new Set([sharedFridgeId, personalFridgeRow?.id, linkedSharedFridgeId].filter(Boolean))
+  ];
+
   return (
     <div className="min-h-screen bg-gray-50">
       {isLoadingState && (
@@ -3440,9 +3511,6 @@ const OlivierApp = () => {
             </button>
           </div>
         </div>
-        <p className="text-center text-[10px] text-gray-400 leading-tight -mt-0.5 tabular-nums">
-          {APP_RELEASE_LABEL}
-        </p>
       </div>
 
       {fridgeSwitchOpen && canQuickSwitchFridge && (
@@ -3644,9 +3712,6 @@ const OlivierApp = () => {
                 </button>
               </div>
             )}
-            <p className="text-center text-[10px] text-gray-400 mt-4 pt-3 border-t border-gray-100 tabular-nums">
-              {APP_RELEASE_LABEL}
-            </p>
           </div>
         </div>
       )}
@@ -3672,7 +3737,8 @@ const OlivierApp = () => {
               </button>
             </div>
             <p className="text-sm text-gray-600 mb-4">
-              Идентификаторы для поддержки и проверки синхронизации между устройствами.
+              Учётная запись и кладовые. Ссылку-приглашение можно отправить в Telegram — по ней откроется мини-приложение
+              и вступление в общую кладовую (нужен бот с тем же username, что в ссылке).
             </p>
             <div className="space-y-3 text-sm">
               <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
@@ -3693,62 +3759,82 @@ const OlivierApp = () => {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                <div className="text-xs font-medium text-gray-500 mb-1">Сейчас открыта кладовая</div>
-                <div className="font-medium text-gray-900 mb-1">{fridgeDisplayName || '—'}</div>
-                <div className="text-xs text-gray-600 mb-2">
-                  {sharedFridgeId
-                    ? fridgeIsPersonal
-                      ? 'Личная'
-                      : `Общая${sharedInviteCode ? ` · код ${sharedInviteCode}` : ''}`
-                    : 'Не выбрана'}
-                </div>
-                <div className="flex items-start gap-2">
-                  <code className="text-xs break-all flex-1 text-gray-800">{sharedFridgeId || '—'}</code>
-                  {sharedFridgeId ? (
-                    <button
-                      type="button"
-                      onClick={() => copyAccountLine(sharedFridgeId, 'ID кладовой скопирован')}
-                      className="shrink-0 text-xs text-blue-600 font-medium"
-                    >
-                      Копировать
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              {personalFridgeRow?.id ? (
-                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                  <div className="text-xs font-medium text-gray-500 mb-1">Ваша личная кладовая</div>
-                  <div className="font-medium text-gray-900 mb-2">{personalFridgeRow.name || 'Личная'}</div>
-                  <div className="flex items-start gap-2">
-                    <code className="text-xs break-all flex-1 text-gray-800">{personalFridgeRow.id}</code>
-                    <button
-                      type="button"
-                      onClick={() => copyAccountLine(personalFridgeRow.id, 'ID скопирован')}
-                      className="shrink-0 text-xs text-blue-600 font-medium"
-                    >
-                      Копировать
-                    </button>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Кладовые</div>
+              {cabinetFridgeIdsOrdered.map((fid) => {
+                const meta = cabinetFridgeGroups[fid];
+                const isCurrent = fid === sharedFridgeId;
+                const title =
+                  meta?.name ||
+                  (fid === personalFridgeRow?.id ? personalFridgeRow?.name : null) ||
+                  (fid === linkedSharedFridgeId ? linkedSharedFridgeName : null) ||
+                  (isCurrent ? fridgeDisplayName : null) ||
+                  'Кладовая';
+                const isPersonal =
+                  meta?.is_personal != null ? Boolean(meta.is_personal) : fid === personalFridgeRow?.id;
+                const inviteCode =
+                  meta?.invite_code ||
+                  (isCurrent && !fridgeIsPersonal ? sharedInviteCode : null) ||
+                  null;
+                const inviteLink = !isPersonal && inviteCode ? buildFridgeInviteTelegramLink(inviteCode) : '';
+                const canSwitch = Boolean(supabase && telegramUserId && fid && !isCurrent);
+                return (
+                  <div key={fid} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3 space-y-2">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900 truncate">{title}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          {isPersonal ? 'Личная' : 'Общая'}
+                          {isCurrent ? ' · сейчас открыта' : ''}
+                          {!isPersonal && inviteCode ? ` · код ${inviteCode}` : ''}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5 shrink-0 items-stretch">
+                        <button
+                          type="button"
+                          disabled={!canSwitch || fridgeSwitchBusy}
+                          onClick={async () => {
+                            await switchToFridgeId(fid);
+                            setShowAccountModal(false);
+                          }}
+                          className="text-xs font-medium px-3 py-2 rounded-lg bg-blue-500 text-white disabled:opacity-40 disabled:pointer-events-none"
+                        >
+                          {isCurrent ? 'Открыта' : 'Открыть'}
+                        </button>
+                        {isPersonal ? (
+                          <span className="text-[10px] text-gray-500 text-center px-1">
+                            Ссылка только для общей кладовой
+                          </span>
+                        ) : inviteLink ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyAccountLine(inviteLink, 'Ссылка скопирована — отправьте в Telegram')
+                            }
+                            className="text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-800 flex items-center justify-center gap-1"
+                          >
+                            <Share2 size={14} aria-hidden />
+                            Ссылка-приглашение
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-gray-500 text-center">Загрузка кода…</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 pt-1 border-t border-gray-200/80">
+                      <code className="text-[10px] break-all flex-1 text-gray-600">{fid}</code>
+                      <button
+                        type="button"
+                        onClick={() => copyAccountLine(fid, 'ID кладовой скопирован')}
+                        className="shrink-0 text-[10px] text-blue-600 font-medium"
+                      >
+                        Копировать
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-
-              {linkedSharedFridgeId ? (
-                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                  <div className="text-xs font-medium text-gray-500 mb-1">Семейная кладовая (для переключения)</div>
-                  <div className="font-medium text-gray-900 mb-2">{linkedSharedFridgeName || 'Семейная'}</div>
-                  <div className="flex items-start gap-2">
-                    <code className="text-xs break-all flex-1 text-gray-800">{linkedSharedFridgeId}</code>
-                    <button
-                      type="button"
-                      onClick={() => copyAccountLine(linkedSharedFridgeId, 'ID скопирован')}
-                      className="shrink-0 text-xs text-blue-600 font-medium"
-                    >
-                      Копировать
-                    </button>
-                  </div>
-                </div>
+                );
+              })}
+              {cabinetFridgeIdsOrdered.length === 0 ? (
+                <p className="text-sm text-gray-500">Кладовые ещё не загружены.</p>
               ) : null}
             </div>
           </div>
@@ -5103,8 +5189,8 @@ const OlivierApp = () => {
                   onClick={() => {
                     const isSupabaseRecipe = typeof selectedRecipe.id === 'string';
                     const link = isSupabaseRecipe
-                      ? `https://t.me/ZayKypi_Bot?startapp=recipe_${selectedRecipe.id}`
-                      : 'https://t.me/ZayKypi_Bot';
+                      ? `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=recipe_${selectedRecipe.id}`
+                      : `https://t.me/${TELEGRAM_BOT_USERNAME}`;
                     const shortIngredients = (selectedRecipe.ingredients || [])
                       .slice(0, 8)
                       .map((ing) => `${ing.name} ${ing.amount}${ing.measure}`)
