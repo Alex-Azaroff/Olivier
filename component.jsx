@@ -18,6 +18,9 @@ const MEAL_DEFAULT_PORTIONS_BY_CATEGORY = {
 };
 const defaultMealPortionsForCategory = (cat) => MEAL_DEFAULT_PORTIONS_BY_CATEGORY[cat] ?? 3;
 
+/** Подпись стабильного релиза (шапка и окно «Семейный холодильник») */
+const APP_RELEASE_LABEL = 'Стабильная версия 3.5';
+
 // Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
 // 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
 // Кухня (объём): ч.л. 5 мл, ст.л. 15 мл, стакан 250 мл. Ориентиры массы (г) для воды/муки/сахара — см. recipes.js.
@@ -957,6 +960,7 @@ const OlivierApp = () => {
   /** Имя при создании семейной кладовой */
   const [createFridgeNameDraft, setCreateFridgeNameDraft] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showAccountModal, setShowAccountModal] = useState(false);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   /** Личная группа пользователя (для переключателя кладовых) */
@@ -1380,9 +1384,63 @@ const OlivierApp = () => {
     };
   }, [telegramUserId]);
 
-  // Сохранение: общий холодильник → fridge_states; иначе user_states + localStorage
+  // Сохранение в облако: JSON кладовой (без списка продуктов — они в inventory).
+  // Отдельно от эффекта с pantryItems, иначе каждое удаление/редактирование продукта
+  // вызывало тяжёлый upsert fridge_states и ощущалось как «задержка UI».
   useEffect(() => {
     if (isLoadingState) return;
+    if (!sharedFridgeId || !supabase || !telegramUserId) return;
+
+    const saveState = async () => {
+      try {
+        const stateToSave = {
+          preparedMeals: preparedMeals.map((meal) => ({
+            ...meal,
+            preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
+            expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
+          })),
+          shoppingItems,
+          favoriteProducts,
+          favoriteRecipes,
+          favoriteMeals,
+          customRecipes,
+          pantryItems: []
+        };
+        saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
+        const nowIso = new Date().toISOString();
+        await supabase.from('fridge_states').upsert(
+          {
+            fridge_id: sharedFridgeId,
+            state: stateToSave,
+            updated_at: nowIso
+          },
+          { onConflict: 'fridge_id' }
+        );
+        lastFridgeRemoteAtRef.current = nowIso;
+        skipNextFridgePollRef.current = true;
+      } catch (e) {
+        console.error('Error saving fridge_states', e);
+      }
+    };
+
+    saveState();
+  }, [
+    telegramUserId,
+    isLoadingState,
+    sharedFridgeId,
+    supabase,
+    shoppingItems,
+    favoriteProducts,
+    favoriteRecipes,
+    favoriteMeals,
+    customRecipes,
+    preparedMeals
+  ]);
+
+  // Локальное + user_states (в т.ч. pantry в JSON), когда нет полного облачного режима
+  useEffect(() => {
+    if (isLoadingState) return;
+    if (sharedFridgeId && supabase && telegramUserId) return;
 
     const saveState = async () => {
       try {
@@ -1410,19 +1468,6 @@ const OlivierApp = () => {
 
         if (sharedFridgeId) {
           saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
-          if (supabase && telegramUserId) {
-            const nowIso = new Date().toISOString();
-            await supabase.from('fridge_states').upsert(
-              {
-                fridge_id: sharedFridgeId,
-                state: stateToSave,
-                updated_at: nowIso
-              },
-              { onConflict: 'fridge_id' }
-            );
-            lastFridgeRemoteAtRef.current = nowIso;
-            skipNextFridgePollRef.current = true;
-          }
           return;
         }
 
@@ -1448,6 +1493,7 @@ const OlivierApp = () => {
     telegramUserId,
     isLoadingState,
     sharedFridgeId,
+    supabase,
     pantryItems,
     shoppingItems,
     favoriteProducts,
@@ -1607,13 +1653,14 @@ const OlivierApp = () => {
       }
       const { data: grp, error: gErr } = await supabase
         .from('fridge_groups')
-        .select('invite_code, name, is_personal')
+        .select('id, invite_code, name, is_personal')
         .eq('id', fid)
         .maybeSingle();
       if (gErr) {
         console.error('fridge_groups select', gErr);
       }
-      if (!grp?.id) {
+      // Проверять grp, а не grp.id: в select раньше не было id — строка «существует», но id в объекте не было.
+      if (!grp) {
         if (previousFridgeId) {
           const { error: revErr } = await supabase.from('fridge_members').upsert(
             { telegram_user_id: telegramUserId, fridge_id: previousFridgeId },
@@ -2010,13 +2057,16 @@ const OlivierApp = () => {
 
     if (usesCloudInventory && item.id) {
       if (newQty <= 0) {
-        const { error } = await deleteInventoryRow(item.id);
-        if (error) {
-          showNotification('Не удалось обновить кладовую');
-          return;
-        }
-        setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
+        const id = item.id;
+        const snap = { ...item };
+        setPantryItems((prev) => prev.filter((p) => p.id !== id));
         showNotification(`${item.name} закончился 🪹`);
+        deleteInventoryRow(id).then(({ error }) => {
+          if (error) {
+            setPantryItems((prev) => [...prev, snap]);
+            showNotification('Не удалось обновить кладовую');
+          }
+        });
       } else {
         const { data, error } = await updateInventoryRow(item.id, { quantity: newQty });
         if (error || !data) {
@@ -3279,6 +3329,17 @@ const OlivierApp = () => {
       linkedSharedFridgeId !== personalFridgeRow.id
   );
 
+  const copyAccountLine = async (text, doneMsg = 'Скопировано') => {
+    if (text == null || text === '') return;
+    const s = String(text);
+    try {
+      await navigator.clipboard.writeText(s);
+      showNotification(doneMsg);
+    } catch {
+      showNotification(s);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {isLoadingState && (
@@ -3348,7 +3409,18 @@ const OlivierApp = () => {
               )}
             </h1>
           )}
-          <div className="shrink-0 w-12 flex items-center justify-center">
+          <div className="shrink-0 flex items-center justify-center gap-0.5">
+            {currentTab === 'pantry' && (
+              <button
+                type="button"
+                onClick={() => setShowAccountModal(true)}
+                className="p-2 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+                title="Личный кабинет"
+                aria-label="Личный кабинет"
+              >
+                <User size={22} />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowShareModal(true)}
@@ -3368,6 +3440,9 @@ const OlivierApp = () => {
             </button>
           </div>
         </div>
+        <p className="text-center text-[10px] text-gray-400 leading-tight -mt-0.5 tabular-nums">
+          {APP_RELEASE_LABEL}
+        </p>
       </div>
 
       {fridgeSwitchOpen && canQuickSwitchFridge && (
@@ -3569,6 +3644,113 @@ const OlivierApp = () => {
                 </button>
               </div>
             )}
+            <p className="text-center text-[10px] text-gray-400 mt-4 pt-3 border-t border-gray-100 tabular-nums">
+              {APP_RELEASE_LABEL}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showAccountModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]"
+          onClick={() => setShowAccountModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-bold pr-8">Личный кабинет</h2>
+              <button
+                type="button"
+                onClick={() => setShowAccountModal(false)}
+                className="text-gray-500 shrink-0"
+                aria-label="Закрыть"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Идентификаторы для поддержки и проверки синхронизации между устройствами.
+            </p>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                <div className="text-xs font-medium text-gray-500 mb-1">Telegram user id</div>
+                <div className="flex items-start gap-2">
+                  <code className="text-xs break-all flex-1 text-gray-800">
+                    {telegramUserId || 'Неизвестно — откройте приложение из Telegram'}
+                  </code>
+                  {telegramUserId ? (
+                    <button
+                      type="button"
+                      onClick={() => copyAccountLine(telegramUserId)}
+                      className="shrink-0 text-xs text-blue-600 font-medium"
+                    >
+                      Копировать
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                <div className="text-xs font-medium text-gray-500 mb-1">Сейчас открыта кладовая</div>
+                <div className="font-medium text-gray-900 mb-1">{fridgeDisplayName || '—'}</div>
+                <div className="text-xs text-gray-600 mb-2">
+                  {sharedFridgeId
+                    ? fridgeIsPersonal
+                      ? 'Личная'
+                      : `Общая${sharedInviteCode ? ` · код ${sharedInviteCode}` : ''}`
+                    : 'Не выбрана'}
+                </div>
+                <div className="flex items-start gap-2">
+                  <code className="text-xs break-all flex-1 text-gray-800">{sharedFridgeId || '—'}</code>
+                  {sharedFridgeId ? (
+                    <button
+                      type="button"
+                      onClick={() => copyAccountLine(sharedFridgeId, 'ID кладовой скопирован')}
+                      className="shrink-0 text-xs text-blue-600 font-medium"
+                    >
+                      Копировать
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {personalFridgeRow?.id ? (
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                  <div className="text-xs font-medium text-gray-500 mb-1">Ваша личная кладовая</div>
+                  <div className="font-medium text-gray-900 mb-2">{personalFridgeRow.name || 'Личная'}</div>
+                  <div className="flex items-start gap-2">
+                    <code className="text-xs break-all flex-1 text-gray-800">{personalFridgeRow.id}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyAccountLine(personalFridgeRow.id, 'ID скопирован')}
+                      className="shrink-0 text-xs text-blue-600 font-medium"
+                    >
+                      Копировать
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {linkedSharedFridgeId ? (
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                  <div className="text-xs font-medium text-gray-500 mb-1">Семейная кладовая (для переключения)</div>
+                  <div className="font-medium text-gray-900 mb-2">{linkedSharedFridgeName || 'Семейная'}</div>
+                  <div className="flex items-start gap-2">
+                    <code className="text-xs break-all flex-1 text-gray-800">{linkedSharedFridgeId}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyAccountLine(linkedSharedFridgeId, 'ID скопирован')}
+                      className="shrink-0 text-xs text-blue-600 font-medium"
+                    >
+                      Копировать
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       )}
@@ -3702,13 +3884,19 @@ const OlivierApp = () => {
                             <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
                           </button>
                           <button
-                            onClick={async () => {
+                            onClick={() => {
                               if (usesCloudInventory && item.id) {
-                                const { error } = await deleteInventoryRow(item.id);
-                                if (error) {
-                                  showNotification('Не удалось удалить продукт');
-                                  return;
-                                }
+                                const id = item.id;
+                                const snap = { ...item };
+                                setPantryItems((prev) => prev.filter((p) => p.id !== id));
+                                showNotification(`${item.name} удален из кладовой`);
+                                deleteInventoryRow(id).then(({ error }) => {
+                                  if (error) {
+                                    setPantryItems((prev) => [...prev, snap]);
+                                    showNotification('Не удалось удалить продукт');
+                                  }
+                                });
+                                return;
                               }
                               setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
                               showNotification(`${item.name} удален из кладовой`);
