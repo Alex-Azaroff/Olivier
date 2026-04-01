@@ -750,6 +750,96 @@ const formatShoppingExportLine = (item) => {
   return `${item.completed ? '✓' : '•'} ${text}`;
 };
 
+const SWIPE_DELETE_MAX_PX = 88;
+const SWIPE_DELETE_TRIGGER_PX = 44;
+
+/**
+ * Свайп влево — удаление (touch). Вертикальный скролл не блокируется, пока жест не распознан как горизонтальный.
+ */
+const SwipeToDeleteRow = ({ children, onDelete, disabled = false, className = '' }) => {
+  const [tx, setTx] = useState(0);
+  const [moving, setMoving] = useState(false);
+  const innerRef = useRef(null);
+  const txRef = useRef(0);
+  const axisRef = useRef(null);
+  const startRef = useRef({ x: 0, y: 0 });
+  const onDeleteRef = useRef(onDelete);
+  onDeleteRef.current = onDelete;
+
+  useEffect(() => {
+    txRef.current = tx;
+  }, [tx]);
+
+  useEffect(() => {
+    const el = innerRef.current;
+    if (!el || disabled) return undefined;
+
+    const onStart = (e) => {
+      if (!e.touches?.length) return;
+      axisRef.current = null;
+      setMoving(true);
+      startRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    };
+    const onMove = (e) => {
+      if (!e.touches?.length) return;
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      const dx = x - startRef.current.x;
+      const dy = y - startRef.current.y;
+      if (axisRef.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        axisRef.current = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+      if (axisRef.current === 'h') {
+        e.preventDefault();
+        const t = Math.min(0, Math.max(-SWIPE_DELETE_MAX_PX, dx));
+        txRef.current = t;
+        setTx(t);
+      }
+    };
+    const onEnd = () => {
+      if (axisRef.current === 'h' && txRef.current <= -SWIPE_DELETE_TRIGGER_PX) {
+        onDeleteRef.current?.();
+      }
+      setMoving(false);
+      txRef.current = 0;
+      setTx(0);
+      axisRef.current = null;
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [disabled]);
+
+  return (
+    <div className={`relative overflow-hidden ${className}`}>
+      <div
+        className="absolute inset-y-0 right-0 w-[5.25rem] flex items-center justify-center bg-red-500 text-white text-[11px] font-semibold leading-tight pointer-events-none z-0"
+        aria-hidden
+      >
+        Удалить
+      </div>
+      <div
+        ref={innerRef}
+        className="relative z-[1] bg-white shadow-sm rounded-xl select-none"
+        style={{
+          transform: `translateX(${tx}px)`,
+          transition: moving ? 'none' : 'transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)'
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
 const hydrateAppState = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   return {
@@ -3876,8 +3966,26 @@ const OlivierApp = () => {
               ) : (() => {
                 const renderItem = (item, showCategory = false) => {
                   const expiryStatus = getExpiryStatus(item.expiryDate);
+                  const removePantryItem = () => {
+                    if (usesCloudInventory && item.id) {
+                      const id = item.id;
+                      const snap = { ...item };
+                      setPantryItems((prev) => prev.filter((p) => p.id !== id));
+                      showNotification(`${item.name} удален из кладовой`);
+                      deleteInventoryRow(id).then(({ error }) => {
+                        if (error) {
+                          setPantryItems((prev) => [...prev, snap]);
+                          showNotification('Не удалось удалить продукт');
+                        }
+                      });
+                      return;
+                    }
+                    setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
+                    showNotification(`${item.name} удален из кладовой`);
+                  };
                   return (
-                    <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm">
+                    <SwipeToDeleteRow key={item.id} className="rounded-xl" onDelete={removePantryItem}>
+                      <div className="p-4">
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
@@ -3970,23 +4078,8 @@ const OlivierApp = () => {
                             <Heart size={20} fill={favoriteProducts.some(fav => fav.name === item.name) ? 'currentColor' : 'none'} />
                           </button>
                           <button
-                            onClick={() => {
-                              if (usesCloudInventory && item.id) {
-                                const id = item.id;
-                                const snap = { ...item };
-                                setPantryItems((prev) => prev.filter((p) => p.id !== id));
-                                showNotification(`${item.name} удален из кладовой`);
-                                deleteInventoryRow(id).then(({ error }) => {
-                                  if (error) {
-                                    setPantryItems((prev) => [...prev, snap]);
-                                    showNotification('Не удалось удалить продукт');
-                                  }
-                                });
-                                return;
-                              }
-                              setPantryItems((prev) => prev.filter((p) => p.id !== item.id));
-                              showNotification(`${item.name} удален из кладовой`);
-                            }}
+                            type="button"
+                            onClick={removePantryItem}
                             className="text-red-500 hover:text-red-700 transition-colors"
                             title="Удалить продукт"
                           >
@@ -3994,7 +4087,8 @@ const OlivierApp = () => {
                           </button>
                         </div>
                       </div>
-                    </div>
+                      </div>
+                    </SwipeToDeleteRow>
                   );
                 };
 
@@ -4207,72 +4301,76 @@ const OlivierApp = () => {
                         {category}
                       </h3>
                       <div className="space-y-2">
-                        {items.map(item => (
-                    <div key={item.id} className={`bg-white rounded-xl p-4 shadow-sm ${item.completed ? 'opacity-50' : ''}`}>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => {
-                              const updatedItems = shoppingItems.map(shopItem =>
-                                shopItem.id === item.id
-                                  ? { ...shopItem, completed: !shopItem.completed }
-                                  : shopItem
-                              );
-                              setShoppingItems(updatedItems);
-                            }}
-                            className={`w-6 h-6 min-w-6 min-h-6 shrink-0 aspect-square rounded-full border-2 p-0 appearance-none flex items-center justify-center transition-all duration-200 ${
-                              item.completed 
-                                ? 'bg-green-500 border-green-500 text-white shadow-md' 
-                                : 'border-gray-300 hover:border-green-400 bg-white'
-                            }`}
-                            title={item.completed ? 'Отменить покупку' : 'Отметить как купленное'}
-                          >
-                            {item.completed && <Check size={14} />}
-                          </button>
-                          <div>
-                            <div className={`font-semibold ${item.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>
-                              {item.name}
-                              {item.note && (
-                                <span className="text-gray-400 font-normal ml-2">
-                                  ({item.note})
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              {item.quantity} {item.measure}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              setEditingItem(item);
-                              setEditFormData({
-                                name: item.name,
-                                quantity: item.quantity,
-                                measure: item.measure,
-                                expiryDate: '',
-                                category: item.category || '🏷️ Прочее'
-                              });
-                              setShowEditModal(true);
-                            }}
-                            className="text-blue-500"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setShoppingItems(prev => prev.filter(s => s.id !== item.id));
-                              showNotification('Продукт удален');
-                            }}
-                            className="text-red-500"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                        ))}
+                        {items.map((item) => {
+                          const removeShoppingItem = () => {
+                            setShoppingItems((prev) => prev.filter((s) => s.id !== item.id));
+                            showNotification('Продукт удален');
+                          };
+                          return (
+                            <SwipeToDeleteRow key={item.id} className="rounded-xl" onDelete={removeShoppingItem}>
+                              <div className={`p-4 ${item.completed ? 'opacity-50' : ''}`}>
+                                <div className="flex justify-between items-center">
+                                  <div className="flex items-center gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updatedItems = shoppingItems.map((shopItem) =>
+                                          shopItem.id === item.id
+                                            ? { ...shopItem, completed: !shopItem.completed }
+                                            : shopItem
+                                        );
+                                        setShoppingItems(updatedItems);
+                                      }}
+                                      className={`w-6 h-6 min-w-6 min-h-6 shrink-0 aspect-square rounded-full border-2 p-0 appearance-none flex items-center justify-center transition-all duration-200 ${
+                                        item.completed
+                                          ? 'bg-green-500 border-green-500 text-white shadow-md'
+                                          : 'border-gray-300 hover:border-green-400 bg-white'
+                                      }`}
+                                      title={item.completed ? 'Отменить покупку' : 'Отметить как купленное'}
+                                    >
+                                      {item.completed && <Check size={14} />}
+                                    </button>
+                                    <div>
+                                      <div
+                                        className={`font-semibold ${item.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}
+                                      >
+                                        {item.name}
+                                        {item.note && (
+                                          <span className="text-gray-400 font-normal ml-2">({item.note})</span>
+                                        )}
+                                      </div>
+                                      <div className="text-sm text-gray-600">
+                                        {item.quantity} {item.measure}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingItem(item);
+                                        setEditFormData({
+                                          name: item.name,
+                                          quantity: item.quantity,
+                                          measure: item.measure,
+                                          expiryDate: '',
+                                          category: item.category || '🏷️ Прочее'
+                                        });
+                                        setShowEditModal(true);
+                                      }}
+                                      className="text-blue-500"
+                                    >
+                                      <Edit3 size={16} />
+                                    </button>
+                                    <button type="button" onClick={removeShoppingItem} className="text-red-500">
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </SwipeToDeleteRow>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
