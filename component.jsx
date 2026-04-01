@@ -3502,7 +3502,7 @@ const OlivierApp = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 relative isolate">
       {isLoadingState && (
         <div className="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl px-6 py-4 shadow">
@@ -3932,7 +3932,10 @@ const OlivierApp = () => {
       )}
 
   {/* Content */}
-  <div className="px-4 pt-2 pb-28" ref={contentRef}>
+  <div
+    className="px-4 pt-2 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)))]"
+    ref={contentRef}
+  >
         {/* Main Content */}
         <div className="space-y-4">
           {currentTab === 'pantry' && (
@@ -4627,7 +4630,7 @@ const OlivierApp = () => {
                 setShowAddModal(true);
               }
             }}
-            className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-40"
+            className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-[60]"
           >
             <Plus size={24} />
           </button>
@@ -4635,7 +4638,7 @@ const OlivierApp = () => {
           {((currentTab === 'pantry' && pantrySubTab === 'products') || currentTab === 'shopping') && (
             <button
               onClick={() => handleBarcodeScan(currentTab === 'shopping' ? 'shopping' : 'form')}
-              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-40"
+              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-[60]"
               title="Сканировать штрихкод"
             >
               <ScanLine size={24} />
@@ -4644,8 +4647,8 @@ const OlivierApp = () => {
         </>
       )}
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
+      {/* Bottom Navigation — z-50 выше контента со transform (свайп), иначе карточки перекрывают бар */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))] shadow-[0_-4px_16px_rgba(0,0,0,0.07)]">
         <div className="flex justify-around">
           <button
             onClick={() => setCurrentTab('pantry')}
