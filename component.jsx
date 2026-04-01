@@ -7,6 +7,17 @@ import { supabase } from './src/supabaseClient';
 import { PRODUCTS_DB, PRODUCT_CATEGORIES } from './src/data/products';
 import { MEAL_CATEGORIES, MEAL_DEFAULT_DAYS_BY_CATEGORY } from './src/data/meals';
 
+/** Пресет числа порций при добавлении готового блюда (по категории) */
+const MEAL_DEFAULT_PORTIONS_BY_CATEGORY = {
+  Суп: 4,
+  Гарнир: 3,
+  Мясо: 3,
+  Рыба: 3,
+  Салат: 2,
+  Десерт: 6
+};
+const defaultMealPortionsForCategory = (cat) => MEAL_DEFAULT_PORTIONS_BY_CATEGORY[cat] ?? 3;
+
 // Единицы: масса в г, объём в мл (фактор — во сколько раз умножить количество в этой мере, чтобы получить базу).
 // 1 кг = 1000 г; 1 г = 1000 мг; 1 л = 1000 мл; 1 мл = 1 см³.
 // Кухня (объём): ч.л. 5 мл, ст.л. 15 мл, стакан 250 мл. Ориентиры массы (г) для воды/муки/сахара — см. recipes.js.
@@ -280,6 +291,21 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
     setShowSuggestions(false);
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setShowSuggestions(false);
+      setSuggestions([]);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Enter' && showSuggestions) {
+      // Закрыть подсказки и оставить введённый текст (продукт не из базы)
+      setShowSuggestions(false);
+      setSuggestions([]);
+      e.preventDefault();
+    }
+  };
+
   return (
     <div className="relative" ref={containerRef}>
       <input
@@ -288,6 +314,7 @@ const AutocompleteInput = ({ value, onChange, onSelect, placeholder, products })
         value={value}
         onChange={handleChange}
         onFocus={handleFocus}
+        onKeyDown={handleKeyDown}
         className="w-full p-3 border border-gray-200 rounded-xl"
       />
       
@@ -433,26 +460,112 @@ const AuthModal = ({ isOpen, onClose, onLogin, onRegister }) => {
   );
 };
 
+// Сопоставление ингредиента рецепта с кладовой (точное имя + те же эвристики, что для «возможных рецептов»)
+const INGREDIENT_SYNONYMS = {
+  цукини: ['кабачки', 'кабачок'],
+  кабачки: ['цукини', 'кабачок'],
+  кабачок: ['цукини', 'кабачки'],
+  'бобы эдамаме': ['эдамаме', 'эдам', 'соевые бобы'],
+  эдамаме: ['бобы эдамаме', 'эдам', 'соевые бобы'],
+  'апельсиновый фреш': ['апельсиновый сок', 'апельсины', 'апельсин'],
+  'жареные тыквенные семечки': ['семечки', 'тыквенные семечки', 'семечки тыквенные'],
+  'тыквенные семечки': ['семечки', 'жареные тыквенные семечки'],
+  мед: ['мед цветочный', 'мед натуральный', 'мёд', 'мед гречишный'],
+  'оливковое масло': ['оливковое масло ev', 'масло оливковое', 'extra virgin olive oil'],
+  'огурцы свежие': ['огурцы'],
+  томаты: ['помидоры', 'томат'],
+  помидоры: ['томаты', 'томат'],
+  лук: ['лук репчатый', 'лук белый'],
+  'лук репчатый': ['лук', 'лук белый'],
+  чеснок: ['чеснок свежий'],
+  молоко: ['молоко пастеризованное', 'молоко ультрапастеризованное'],
+  'масло сливочное': ['масло сливочное 82.5%', 'масло сливочное 72%'],
+  пармезан: ['пармезано реджано', 'сыр пармезан']
+};
+
+const normalizeIngredientName = (s) => {
+  try {
+    return String(s)
+      .toLowerCase()
+      .normalize('NFC')
+      .replace(/ё/g, 'е')
+      .replace(/[^а-яa-z0-9]+/gi, ' ')
+      .trim();
+  } catch {
+    return String(s).toLowerCase().trim();
+  }
+};
+
+const findPantryItemForIngredientInList = (pantryItems, ingredientName) => {
+  if (!Array.isArray(pantryItems) || !ingredientName) return null;
+  const norm = normalizeIngredientName(ingredientName);
+  const ingWords = norm.split(' ').filter((w) => w.length >= 3);
+
+  return (
+    pantryItems.find((item) => {
+      const itemNorm = normalizeIngredientName(item.name);
+      if (itemNorm === norm) return true;
+      const minLen = Math.min(itemNorm.length, norm.length);
+      if (minLen >= 4 && (itemNorm.includes(norm) || norm.includes(itemNorm))) return true;
+      const synonyms = INGREDIENT_SYNONYMS[norm] || [];
+      if (synonyms.includes(itemNorm)) return true;
+      const reverseSynonyms = INGREDIENT_SYNONYMS[itemNorm] || [];
+      if (reverseSynonyms.includes(norm)) return true;
+      const pantryWords = itemNorm.split(' ').filter((w) => w.length >= 3);
+      return ingWords.some((iw) =>
+        pantryWords.some((pw) => {
+          if (iw === pw) return true;
+          const prefixLen = Math.min(iw.length, pw.length, 5);
+          return prefixLen >= 4 && iw.slice(0, prefixLen) === pw.slice(0, prefixLen);
+        })
+      );
+    }) || null
+  );
+};
+
+/** Единая логика: есть ли в кладовой строка для ингредиента и хватает ли количества */
+const getIngredientPantryMatch = (pantryItems, ingredient) => {
+  if (!ingredient || !Array.isArray(pantryItems)) return { kind: 'missing' };
+  const needAmount = Number(ingredient.amount);
+  const need = isFinite(needAmount) ? needAmount : 0;
+  const ingMeasure = ingredient.measure || 'шт.';
+
+  const exact = pantryItems.find(
+    (item) => item.name === ingredient.name && Number(item.quantity) > 0
+  );
+  let pantryItem = exact;
+  if (!pantryItem) {
+    const f = findPantryItemForIngredientInList(pantryItems, ingredient.name);
+    if (f && Number(f.quantity) > 0) pantryItem = f;
+  }
+  if (!pantryItem) return { kind: 'missing' };
+
+  const availableInIngredientUnit = convertQuantity(
+    Number(pantryItem.quantity),
+    pantryItem.measure,
+    ingMeasure
+  );
+  if (!isFinite(availableInIngredientUnit) || availableInIngredientUnit <= 0) {
+    return { kind: 'missing' };
+  }
+  if (need <= 0 || availableInIngredientUnit >= need) return { kind: 'available' };
+  return { kind: 'partial', available: availableInIngredientUnit };
+};
+
 // Компонент карточки рецепта
 const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavorite, onViewDetails, onDelete, onAddToMyRecipes, onEdit, isFavorite, deleteTitle, prioritizeAvailableIngredients = false }) => {
   const getIngredientStatus = (ingredient) => {
-    const pantryItem = pantryItems.find(item => item.name === ingredient.name);
-    if (!pantryItem || pantryItem.quantity === 0) return {
-      status: 'missing',
-      color: 'bg-gray-200 text-gray-700'
-    };
-
-    // Convert pantry quantity to the unit used by the ingredient for comparison
-    const availableInIngredientUnit = convertQuantity(pantryItem.quantity, pantryItem.measure, ingredient.measure);
-    if (availableInIngredientUnit >= ingredient.amount) return {
-      status: 'available',
-      color: 'bg-green-200 text-green-800'
-    };
-
+    const m = getIngredientPantryMatch(pantryItems, ingredient);
+    if (m.kind === 'missing') {
+      return { status: 'missing', color: 'bg-gray-200 text-gray-700' };
+    }
+    if (m.kind === 'available') {
+      return { status: 'available', color: 'bg-green-200 text-green-800' };
+    }
     return {
       status: 'partial',
       color: 'bg-orange-200 text-orange-800',
-      available: availableInIngredientUnit
+      available: m.available
     };
   };
 
@@ -873,7 +986,8 @@ const OlivierApp = () => {
   const [mealFormData, setMealFormData] = useState({
     name: '',
     category: 'Суп',
-    preparedDate: new Date().toISOString().split('T')[0]
+    preparedDate: new Date().toISOString().split('T')[0],
+    portions: defaultMealPortionsForCategory('Суп')
   });
 
   const [editFormData, setEditFormData] = useState({
@@ -2181,25 +2295,64 @@ const OlivierApp = () => {
   }, [barcodeScanTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToPantry = async (product, quantity = 1, expiryDate = null) => {
-    const existingItem = pantryItems.find(item => item.name === product.name);
-    if (existingItem) {
-      showNotification('Продукт уже в кладовой');
-      return;
-    }
+    const normPantryName = (n) => String(n || '').trim().toLowerCase();
+    const key = normPantryName(product.name);
+    const existingItem = pantryItems.find((item) => normPantryName(item.name) === key);
 
     const shelfLife = product.shelfLife != null ? product.shelfLife : 7;
     const defaultExpiry = expiryDate || new Date(Date.now() + shelfLife * 24 * 60 * 60 * 1000);
+    const incomingMeasure = normalizeMeasure(product.measure) || product.measure || 'шт.';
     const payload = {
       name: product.name,
       category: product.category || '🏷️ Прочее',
-      measure: normalizeMeasure(product.measure) || product.measure || 'шт.',
+      measure: incomingMeasure,
       quantity,
       expiryDate: defaultExpiry,
       shelfLife,
       autoFilled: !expiryDate
     };
 
-    if (usesCloudInventory) {
+    if (existingItem) {
+      const addedQty = convertQuantity(quantity, incomingMeasure, existingItem.measure);
+      const newQ = roundToStep(Number(existingItem.quantity) + addedQty, getQuantityStep(existingItem.measure));
+      const ex = existingItem.expiryDate;
+      const ne = defaultExpiry;
+      let mergedExpiry = null;
+      if (ex && ne) mergedExpiry = ex.getTime() <= ne.getTime() ? ex : ne;
+      else mergedExpiry = ex || ne;
+      const mergedAutoFilled = Boolean(existingItem.autoFilled) && !expiryDate;
+
+      if (usesCloudInventory && existingItem.id) {
+        const { data, error } = await updateInventoryRow(existingItem.id, {
+          quantity: newQ,
+          expiryDate: mergedExpiry,
+          autoFilled: mergedAutoFilled
+        });
+        if (error || !data) {
+          console.error('merge inventory', error);
+          showNotification('Не удалось обновить количество');
+          return;
+        }
+        const mapped = mapInventoryRowToPantryItem(data);
+        setPantryItems((prev) => prev.map((p) => (p.id === existingItem.id ? mapped : p)));
+      } else {
+        setPantryItems((prev) =>
+          prev.map((p) =>
+            normPantryName(p.name) === key
+              ? {
+                  ...p,
+                  quantity: newQ,
+                  expiryDate: mergedExpiry,
+                  autoFilled: mergedAutoFilled
+                }
+              : p
+          )
+        );
+      }
+      showNotification(
+        `${product.name}: +${formatQuantityForDisplay(quantity, incomingMeasure)} ${incomingMeasure} → всего ${formatQuantityForDisplay(newQ, existingItem.measure)} ${existingItem.measure}`
+      );
+    } else if (usesCloudInventory) {
       const { data, error } = await insertInventoryRow(sharedFridgeId, payload);
       if (error) {
         console.error('insert inventory', error);
@@ -2207,6 +2360,7 @@ const OlivierApp = () => {
         return;
       }
       setPantryItems((prev) => [...prev, mapInventoryRowToPantryItem(data)]);
+      showNotification(`${product.name} добавлен в кладовую`);
     } else {
       const newItem = {
         id: Date.now(),
@@ -2217,9 +2371,8 @@ const OlivierApp = () => {
         autoFilled: !expiryDate
       };
       setPantryItems((prev) => [...prev, newItem]);
+      showNotification(`${product.name} добавлен в кладовую`);
     }
-
-    showNotification(`${product.name} добавлен в кладовую`);
     try {
       setTimeout(() => {
         if (contentRef?.current) contentRef.current.scrollTop = contentRef.current.scrollHeight;
@@ -2519,71 +2672,6 @@ const OlivierApp = () => {
   // myLibraryFavorites теперь деривируется из recipeLibrary — отдельная загрузка не нужна
 
   // Функции для работы с рецептами
-  // Таблица синонимов — ключ: нормализованное название из рецепта, значение: нормализованные синонимы из кладовой
-  const INGREDIENT_SYNONYMS = {
-    'цукини': ['кабачки', 'кабачок'],
-    'кабачки': ['цукини', 'кабачок'],
-    'кабачок': ['цукини', 'кабачки'],
-    'бобы эдамаме': ['эдамаме', 'эдам', 'соевые бобы'],
-    'эдамаме': ['бобы эдамаме', 'эдам', 'соевые бобы'],
-    'апельсиновый фреш': ['апельсиновый сок', 'апельсины', 'апельсин'],
-    'жареные тыквенные семечки': ['семечки', 'тыквенные семечки', 'семечки тыквенные'],
-    'тыквенные семечки': ['семечки', 'жареные тыквенные семечки'],
-    'мед': ['мед цветочный', 'мед натуральный', 'мёд', 'мед гречишный'],
-    'оливковое масло': ['оливковое масло ev', 'масло оливковое', 'extra virgin olive oil'],
-    'огурцы свежие': ['огурцы'],
-    'томаты': ['помидоры', 'томат'],
-    'помидоры': ['томаты', 'томат'],
-    'лук': ['лук репчатый', 'лук белый'],
-    'лук репчатый': ['лук', 'лук белый'],
-    'чеснок': ['чеснок свежий'],
-    'молоко': ['молоко пастеризованное', 'молоко ультрапастеризованное'],
-    'масло сливочное': ['масло сливочное 82.5%', 'масло сливочное 72%'],
-    'пармезан': ['пармезано реджано', 'сыр пармезан'],
-  };
-
-  const normalizeIngredientName = (s) => {
-    try {
-      return String(s)
-        .toLowerCase()
-        .normalize('NFC')
-        .replace(/ё/g, 'е')   // ё и е считаем одинаковыми
-        .replace(/[^а-яa-z0-9]+/gi, ' ')
-        .trim();
-    } catch {
-      return String(s).toLowerCase().trim();
-    }
-  };
-
-  const findPantryItemForIngredient = (ingredientName) => {
-    const norm = normalizeIngredientName(ingredientName);
-    const ingWords = norm.split(' ').filter(w => w.length >= 3);
-
-    const match = pantryItems.find(item => {
-      const itemNorm = normalizeIngredientName(item.name);
-      // 1. Точное совпадение нормализованных строк
-      if (itemNorm === norm) return true;
-      // 2. Одна строка содержит другую (только если короткая строка >= 4 символов)
-      const minLen = Math.min(itemNorm.length, norm.length);
-      if (minLen >= 4 && (itemNorm.includes(norm) || norm.includes(itemNorm))) return true;
-      // 3. Синонимы
-      const synonyms = INGREDIENT_SYNONYMS[norm] || [];
-      if (synonyms.includes(itemNorm)) return true;
-      const reverseSynonyms = INGREDIENT_SYNONYMS[itemNorm] || [];
-      if (reverseSynonyms.includes(norm)) return true;
-      // 4. Пересечение слов с учётом морфологии (4+ символьный префикс)
-      const pantryWords = itemNorm.split(' ').filter(w => w.length >= 3);
-      return ingWords.some(iw =>
-        pantryWords.some(pw => {
-          if (iw === pw) return true;
-          const prefixLen = Math.min(iw.length, pw.length, 5);
-          return prefixLen >= 4 && iw.slice(0, prefixLen) === pw.slice(0, prefixLen);
-        })
-      );
-    });
-    return match;
-  };
-
   const getAvailableRecipes = () => {
     // Единый источник: все рецепты из Supabase + пользовательские рецепты
     const catalogRecipes = recipeLibrary;
@@ -2597,17 +2685,11 @@ const OlivierApp = () => {
       return true;
     });
 
-    return unique.filter(recipe => {
+    return unique.filter((recipe) => {
       if (!Array.isArray(recipe.ingredients)) return false;
-      const availableCount = recipe.ingredients.filter(ingredient => {
-        // точное совпадение (как в RecipeCard)
-        const exact = pantryItems.find(
-          item => item.name === ingredient.name && Number(item.quantity) > 0
-        );
-        if (exact) return true;
-        // нечёткое совпадение (синонимы, ё/е, морфология)
-        const fuzzy = findPantryItemForIngredient(ingredient.name);
-        return fuzzy && Number(fuzzy.quantity) > 0;
+      const availableCount = recipe.ingredients.filter((ingredient) => {
+        const m = getIngredientPantryMatch(pantryItems, ingredient);
+        return m.kind === 'available' || m.kind === 'partial';
       }).length;
       return availableCount >= 2;
     });
@@ -2873,11 +2955,10 @@ const OlivierApp = () => {
   };
 
   const getIngredientStatus = (ingredient) => {
-    const pantryItem = pantryItems.find(item => item.name === ingredient.name);
-    if (!pantryItem) return { status: 'missing', color: 'text-red-500' };
-    const availableInIngredientUnit = convertQuantity(pantryItem.quantity, pantryItem.measure, ingredient.measure);
-    if (availableInIngredientUnit >= ingredient.amount) return { status: 'available', color: 'text-green-500' };
-    return { status: 'partial', color: 'text-yellow-500', available: availableInIngredientUnit };
+    const m = getIngredientPantryMatch(pantryItems, ingredient);
+    if (m.kind === 'missing') return { status: 'missing', color: 'text-red-500' };
+    if (m.kind === 'available') return { status: 'available', color: 'text-green-500' };
+    return { status: 'partial', color: 'text-yellow-500', available: m.available };
   };
 
   const addMissingIngredientsToCart = (recipe) => {
@@ -3078,17 +3159,17 @@ const OlivierApp = () => {
     const preparedDate = toLocalDate(preparedDateStr);
     const expiresAt = calcMealExpiresAt(preparedDate, category);
 
-    const defaultPortions = {
-      'Суп': 4, 'Гарнир': 3, 'Мясо': 3,
-      'Рыба': 3, 'Салат': 2, 'Десерт': 6
-    };
+    const portions = Math.max(
+      1,
+      Math.floor(Number(mealFormData.portions)) || defaultMealPortionsForCategory(category)
+    );
     const newMeal = {
       id: Date.now(),
       name,
       category,
       preparedDate,
       expiresAt,
-      portions: defaultPortions[category] ?? 3
+      portions
     };
 
     setPreparedMeals((prev) => [newMeal, ...prev]);
@@ -3098,7 +3179,8 @@ const OlivierApp = () => {
     setMealFormData({
       name: '',
       category: 'Суп',
-      preparedDate: new Date().toISOString().split('T')[0]
+      preparedDate: new Date().toISOString().split('T')[0],
+      portions: defaultMealPortionsForCategory('Суп')
     });
   };
 
@@ -4039,12 +4121,6 @@ const OlivierApp = () => {
             <div>
               {/* Возможные рецепты */}
               <div className="mb-6">
-                {(() => {
-                  const available = getAvailableRecipes();
-                  // eslint-disable-next-line no-console
-                  console.log('[Возможные рецепты] pantryItems:', pantryItems.length, 'recipeLibrary:', recipeLibrary.length, 'customRecipes:', customRecipes.length, 'found:', available.length, available.map(r=>r.name));
-                  return null;
-                })()}
                 <h2 className="text-xl font-bold mb-4">
                   Возможные рецепты
                   <span className="text-sm font-normal text-gray-400 ml-2">
@@ -4364,7 +4440,8 @@ const OlivierApp = () => {
             setMealFormData({
               name: '',
               category: 'Суп',
-              preparedDate: new Date().toISOString().split('T')[0]
+              preparedDate: new Date().toISOString().split('T')[0],
+              portions: defaultMealPortionsForCategory('Суп')
             });
           }}
         >
@@ -4380,7 +4457,8 @@ const OlivierApp = () => {
                   setMealFormData({
                     name: '',
                     category: 'Суп',
-                    preparedDate: new Date().toISOString().split('T')[0]
+                    preparedDate: new Date().toISOString().split('T')[0],
+                    portions: defaultMealPortionsForCategory('Суп')
                   });
                 }}
                 className="text-gray-500"
@@ -4405,7 +4483,14 @@ const OlivierApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
                 <select
                   value={mealFormData.category}
-                  onChange={(e) => setMealFormData(prev => ({ ...prev, category: e.target.value }))}
+                  onChange={(e) => {
+                    const cat = e.target.value;
+                    setMealFormData((prev) => ({
+                      ...prev,
+                      category: cat,
+                      portions: defaultMealPortionsForCategory(cat)
+                    }));
+                  }}
                   className="w-full p-3 border border-gray-200 rounded-xl"
                 >
                   {MEAL_CATEGORIES.map((cat) => (
@@ -4414,6 +4499,50 @@ const OlivierApp = () => {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Порций</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: Math.max(1, (Number(prev.portions) || 1) - 1)
+                      }))
+                    }
+                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={mealFormData.portions}
+                    onChange={(e) =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: Math.max(1, Number(e.target.value) || 1)
+                      }))
+                    }
+                    className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl text-center"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: (Number(prev.portions) || 1) + 1
+                      }))
+                    }
+                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
+                  >
+                    +
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Сколько порций в этой заготовке (можно изменить позже)</p>
               </div>
 
               <div>
