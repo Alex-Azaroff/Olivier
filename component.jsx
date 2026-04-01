@@ -1468,15 +1468,28 @@ const OlivierApp = () => {
     ) {
       return;
     }
-    lastFridgeRemoteAtRef.current = updatedAt;
     const h = hydrateAppState(rawState);
     if (!h) return;
-    setPreparedMeals(h.preparedMeals || []);
-    setShoppingItems(h.shoppingItems || []);
-    setFavoriteProducts(h.favoriteProducts || []);
-    setFavoriteRecipes(h.favoriteRecipes || []);
-    if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-    setCustomRecipes(h.customRecipes || []);
+    // Не затирать список покупок / блюда, если в JSON ключа нет (частичное тело или {})
+    if (Object.prototype.hasOwnProperty.call(rawState, 'preparedMeals')) {
+      setPreparedMeals(h.preparedMeals || []);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState, 'shoppingItems')) {
+      setShoppingItems(Array.isArray(h.shoppingItems) ? h.shoppingItems : []);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteProducts')) {
+      setFavoriteProducts(h.favoriteProducts || []);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteRecipes')) {
+      setFavoriteRecipes(h.favoriteRecipes || []);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteMeals')) {
+      setFavoriteMeals(h.favoriteMeals || []);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawState, 'customRecipes')) {
+      setCustomRecipes(h.customRecipes || []);
+    }
+    lastFridgeRemoteAtRef.current = updatedAt;
   }, []);
 
   // Подтягиваем изменения от других членов семьи (опрос раз в 20 с и при возврате на вкладку)
@@ -1575,31 +1588,45 @@ const OlivierApp = () => {
 
   const switchToFridgeId = async (targetId) => {
     if (!supabase || !telegramUserId || !targetId) return;
-    if (targetId === sharedFridgeId) {
+    const fid = String(targetId).trim();
+    if (!fid || fid === sharedFridgeId) {
       setFridgeSwitchOpen(false);
       return;
     }
+    const previousFridgeId = sharedFridgeId;
     setFridgeSwitchBusy(true);
     try {
-      const { error: uErr } = await supabase
-        .from('fridge_members')
-        .update({ fridge_id: targetId })
-        .eq('telegram_user_id', telegramUserId);
+      const { error: uErr } = await supabase.from('fridge_members').upsert(
+        { telegram_user_id: telegramUserId, fridge_id: fid },
+        { onConflict: 'telegram_user_id' }
+      );
       if (uErr) {
-        console.error(uErr);
+        console.error('fridge_members upsert', uErr);
         showNotification('Не удалось переключить кладовую');
         return;
       }
-      const { data: grp } = await supabase
+      const { data: grp, error: gErr } = await supabase
         .from('fridge_groups')
         .select('invite_code, name, is_personal')
-        .eq('id', targetId)
+        .eq('id', fid)
         .maybeSingle();
+      if (gErr) {
+        console.error('fridge_groups select', gErr);
+      }
       if (!grp?.id) {
-        showNotification('Кладовая недоступна');
+        if (previousFridgeId) {
+          const { error: revErr } = await supabase.from('fridge_members').upsert(
+            { telegram_user_id: telegramUserId, fridge_id: previousFridgeId },
+            { onConflict: 'telegram_user_id' }
+          );
+          if (revErr) console.error('fridge_members revert', revErr);
+        }
+        showNotification(
+          'Кладовая не найдена (возможно удалена). Обновите приложение или вступите в семью по коду.'
+        );
         return;
       }
-      setSharedFridgeId(targetId);
+      setSharedFridgeId(fid);
       setSharedInviteCode(grp.invite_code || null);
       setFridgeDisplayName(grp.name || 'Кладовая');
       setFridgeIsPersonal(Boolean(grp.is_personal));
@@ -1607,7 +1634,7 @@ const OlivierApp = () => {
       const { data: fsRow, error: fsErr } = await supabase
         .from('fridge_states')
         .select('state, updated_at')
-        .eq('fridge_id', targetId)
+        .eq('fridge_id', fid)
         .maybeSingle();
       if (fsErr) console.error('fridge_states load', fsErr);
       const rawState = fsRow?.state && typeof fsRow.state === 'object' ? fsRow.state : {};
@@ -1621,7 +1648,7 @@ const OlivierApp = () => {
         if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
         setCustomRecipes(h.customRecipes || []);
       } else {
-        const lf = loadLocalState(telegramUserId, targetId);
+        const lf = loadLocalState(telegramUserId, fid);
         if (lf) {
           if (lf.preparedMeals) setPreparedMeals(lf.preparedMeals);
           if (lf.shoppingItems) setShoppingItems(lf.shoppingItems);
@@ -1633,12 +1660,12 @@ const OlivierApp = () => {
       }
       if (fsRow?.updated_at) lastFridgeRemoteAtRef.current = fsRow.updated_at;
 
-      const inv = await fetchPantryInventory(targetId);
+      const inv = await fetchPantryInventory(fid);
       setPantryItems(inv);
 
       if (!grp.is_personal) {
-        setLinkedSharedFridgeId(targetId);
-        persistLinkedSharedFridgeId(telegramUserId, targetId);
+        setLinkedSharedFridgeId(fid);
+        persistLinkedSharedFridgeId(telegramUserId, fid);
       }
       skipNextFridgePollRef.current = true;
       setFridgeSwitchOpen(false);
@@ -1831,7 +1858,7 @@ const OlivierApp = () => {
         const h = hydrateAppState(fsRow.state);
         if (h) {
           setPreparedMeals(h.preparedMeals || []);
-          setShoppingItems(h.shoppingItems);
+          setShoppingItems(h.shoppingItems || []);
           setFavoriteProducts(h.favoriteProducts);
           setFavoriteRecipes(h.favoriteRecipes);
           if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
@@ -3038,6 +3065,7 @@ const OlivierApp = () => {
 
   // Функция для группировки продуктов по категориям
   const groupItemsByCategory = (items) => {
+    if (!Array.isArray(items)) return {};
     return items.reduce((groups, item) => {
       const category = item.category || '🏷️ Прочее';
       if (!groups[category]) {
@@ -4479,6 +4507,70 @@ const OlivierApp = () => {
                 />
               </div>
 
+              <div className="rounded-xl border border-orange-100 bg-orange-50/50 p-3">
+                <label className="block text-sm font-medium text-gray-800 mb-1">
+                  Количество порций в заготовке
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: Math.max(1, (Number(prev.portions) || 1) - 1)
+                      }))
+                    }
+                    className="bg-white border border-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={mealFormData.portions}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setMealFormData((prev) => ({ ...prev, portions: '' }));
+                        return;
+                      }
+                      const n = parseInt(raw, 10);
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: Number.isFinite(n) && n >= 1 ? n : 1
+                      }));
+                    }}
+                    onBlur={() =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions:
+                          Math.max(1, Math.floor(Number(prev.portions))) ||
+                          defaultMealPortionsForCategory(prev.category)
+                      }))
+                    }
+                    className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl text-center bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMealFormData((prev) => ({
+                        ...prev,
+                        portions: (Number(prev.portions) || 1) + 1
+                      }))
+                    }
+                    className="bg-white border border-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
+                  >
+                    +
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600 mt-2">
+                  Сколько порций в этой кастрюле / форме. После смены категории ниже подставляется норма — при необходимости поправьте число.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Категория</label>
                 <select
@@ -4502,50 +4594,6 @@ const OlivierApp = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Порций</label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMealFormData((prev) => ({
-                        ...prev,
-                        portions: Math.max(1, (Number(prev.portions) || 1) - 1)
-                      }))
-                    }
-                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    value={mealFormData.portions}
-                    onChange={(e) =>
-                      setMealFormData((prev) => ({
-                        ...prev,
-                        portions: Math.max(1, Number(e.target.value) || 1)
-                      }))
-                    }
-                    className="flex-1 min-w-0 p-3 border border-gray-200 rounded-xl text-center"
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMealFormData((prev) => ({
-                        ...prev,
-                        portions: (Number(prev.portions) || 1) + 1
-                      }))
-                    }
-                    className="bg-gray-200 text-gray-700 w-10 h-10 rounded-lg font-semibold shrink-0"
-                  >
-                    +
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">Сколько порций в этой заготовке (можно изменить позже)</p>
-              </div>
-
-              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Дата приготовления</label>
                 <input
                   type="date"
@@ -4556,6 +4604,7 @@ const OlivierApp = () => {
               </div>
 
               <button
+                type="button"
                 onClick={handleAddPreparedMeal}
                 className="w-full bg-orange-500 text-white p-3 rounded-xl font-semibold"
               >
