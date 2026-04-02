@@ -5052,53 +5052,57 @@ const OlivierApp = () => {
 
       {/* Bottom Navigation — z-50 выше контента со transform (свайп), иначе карточки перекрывают бар */}
       <div
-        className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-2 pt-2 shadow-[0_-4px_16px_rgba(0,0,0,0.07)] ${
-          tg ? '' : 'pb-[max(8px,calc(env(safe-area-inset-bottom,0px)+8px))]'
+        className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-2 pt-1.5 shadow-[0_-4px_16px_rgba(0,0,0,0.07)] ${
+          tg ? '' : 'pb-[max(4px,calc(env(safe-area-inset-bottom,0px)+4px))]'
         }`}
         style={
           tg
-            ? { paddingBottom: `${Math.max(8, telegramBottomInsetPx + 8)}px` }
+            ? { paddingBottom: `${Math.max(4, telegramBottomInsetPx + 4)}px` }
             : undefined
         }
       >
-        <div className="flex justify-around items-end max-w-md mx-auto">
+        <div className="flex justify-around items-stretch max-w-md mx-auto">
           <button
             onClick={() => setCurrentTab('pantry')}
-            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 relative ${currentTab === 'pantry' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center justify-center gap-0.5 min-w-0 flex-1 py-0.5 ${currentTab === 'pantry' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <Home size={22} strokeWidth={currentTab === 'pantry' ? 2.25 : 2} />
+            <span className="relative inline-flex shrink-0 size-[22px] items-center justify-center">
+              <Home size={22} strokeWidth={currentTab === 'pantry' ? 2.25 : 2} className="shrink-0" />
+              {hasExpiredItems && (
+                <span className="absolute -right-2 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-orange-500 px-0.5 text-[10px] font-bold leading-none text-white">
+                  !
+                </span>
+              )}
+            </span>
             <span className="text-[11px] leading-tight font-medium">Кладовая</span>
-            {hasExpiredItems && (
-              <div className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
-                !
-              </div>
-            )}
           </button>
           <button
             onClick={() => setCurrentTab('favorites')}
-            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 ${currentTab === 'favorites' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center justify-center gap-0.5 min-w-0 flex-1 py-0.5 ${currentTab === 'favorites' ? 'text-blue-500' : 'text-gray-400'}`}
           >
             <Heart size={22} strokeWidth={currentTab === 'favorites' ? 2.25 : 2} />
             <span className="text-[11px] leading-tight font-medium">Избранное</span>
           </button>
           <button
             onClick={() => setCurrentTab('recipes')}
-            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 ${currentTab === 'recipes' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center justify-center gap-0.5 min-w-0 flex-1 py-0.5 ${currentTab === 'recipes' ? 'text-blue-500' : 'text-gray-400'}`}
           >
             <Book size={22} strokeWidth={currentTab === 'recipes' ? 2.25 : 2} />
             <span className="text-[11px] leading-tight font-medium">Рецепты</span>
           </button>
           <button
             onClick={() => setCurrentTab('shopping')}
-            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 relative ${currentTab === 'shopping' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center justify-center gap-0.5 min-w-0 flex-1 py-0.5 ${currentTab === 'shopping' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <ShoppingCart size={22} strokeWidth={currentTab === 'shopping' ? 2.25 : 2} />
+            <span className="relative inline-flex shrink-0 size-[22px] items-center justify-center">
+              <ShoppingCart size={22} strokeWidth={currentTab === 'shopping' ? 2.25 : 2} className="shrink-0" />
+              {shoppingItems.length > 0 && (
+                <span className="absolute -right-2.5 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-0.5 text-[10px] font-bold leading-none text-white">
+                  {shoppingItems.length > 99 ? '99+' : shoppingItems.length}
+                </span>
+              )}
+            </span>
             <span className="text-[11px] leading-tight font-medium">Покупки</span>
-            {shoppingItems.length > 0 && (
-              <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
-                {shoppingItems.length > 99 ? '99+' : shoppingItems.length}
-              </div>
-            )}
           </button>
         </div>
       </div>
