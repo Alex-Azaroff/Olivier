@@ -3684,7 +3684,9 @@ const OlivierApp = () => {
   const cabinetFridgeIdsOrdered = [
     ...new Set([sharedFridgeId, personalFridgeRow?.id, linkedSharedFridgeId].filter(Boolean))
   ];
-  const headerOffsetPx = tg ? Math.max(telegramHeaderPadPx, 0) + 56 : 64;
+  /* Веб: без env(safe-area-inset-top) — фиксированный отступ как у обычного сайта; TG: высота строки 48 + pb-2 */
+  const webHeaderTopPx = 8;
+  const headerOffsetPx = tg ? Math.max(telegramHeaderPadPx, 0) + 56 : webHeaderTopPx + 56;
 
   return (
     <div className="min-h-screen bg-gray-50 relative isolate">
@@ -3695,19 +3697,17 @@ const OlivierApp = () => {
           </div>
         </div>
       )}
-      {/* Top Bar: в вебе — max(safe-area, 8px) по общему паттерну iOS/PWA; в TG — inset из WebApp API */}
+      {/* Top Bar: веб — стандартный верхний отступ (челка в браузере не учитываем); TG — inset из WebApp API */}
       <div
         className="fixed top-0 left-0 right-0 z-40"
       >
         <div
-        className={`bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5 ${
-          tg ? '' : 'pt-[max(8px,env(safe-area-inset-top,0px))]'
-        }`}
-        style={
-          tg
-            ? { paddingTop: `${Math.max(telegramHeaderPadPx, 0)}px` }
-            : undefined
-        }
+        className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
+        style={{
+          paddingTop: tg
+            ? `${Math.max(telegramHeaderPadPx, 0)}px`
+            : `${webHeaderTopPx}px`
+        }}
       >
         <div className="flex items-center gap-1 min-h-[48px]">
           <div className="shrink-0 w-12 flex items-center justify-center">
