@@ -883,6 +883,30 @@ const OlivierApp = () => {
     refreshWebAuthUser();
   }, [refreshWebAuthUser]);
 
+  const startBotWebLogin = useCallback(async () => {
+    if (tgTelegramUserId) return;
+    setBotWebLoginBusy(true);
+    try {
+      const r = await fetch('/api/auth/web-token/create', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const j = await r.json();
+      if (!j?.ok || !j?.token || !j?.bot_link) {
+        showNotification('Не удалось создать вход через бота');
+        return;
+      }
+      setBotWebLoginToken(String(j.token));
+      setBotWebLoginLink(String(j.bot_link));
+      showNotification('Ссылка готова — откройте бота и подтвердите вход');
+      window.open(String(j.bot_link), '_blank', 'noopener,noreferrer');
+    } catch {
+      showNotification('Не удалось создать вход через бота');
+    } finally {
+      setBotWebLoginBusy(false);
+    }
+  }, [tgTelegramUserId]);
+
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     if (p.get('auth') !== 'failed') return;
@@ -1095,6 +1119,9 @@ const OlivierApp = () => {
   /** Приглашение по ссылке t.me/...?startapp=join_CODE */
   const [deeplinkJoinCode, setDeeplinkJoinCode] = useState(null);
   const tgLoginWidgetHostRef = useRef(null);
+  const [botWebLoginLink, setBotWebLoginLink] = useState('');
+  const [botWebLoginToken, setBotWebLoginToken] = useState('');
+  const [botWebLoginBusy, setBotWebLoginBusy] = useState(false);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   /** Личная группа пользователя (для переключателя кладовых) */
@@ -2166,6 +2193,48 @@ const OlivierApp = () => {
     }, 1500);
     return () => clearInterval(id);
   }, [tgTelegramUserId, webTelegramUserId, refreshWebAuthUser]);
+
+  useEffect(() => {
+    if (!botWebLoginToken || tgTelegramUserId || webTelegramUserId) return;
+    let stopped = false;
+    let tries = 0;
+    const id = setInterval(async () => {
+      if (stopped) return;
+      tries += 1;
+      try {
+        const r = await fetch(`/api/auth/web-token/status?token=${encodeURIComponent(botWebLoginToken)}`, {
+          credentials: 'include',
+          cache: 'no-store'
+        });
+        const j = await r.json();
+        if (j?.status === 'authorized' && j?.telegram_user_id) {
+          setWebTelegramUserId(String(j.telegram_user_id));
+          setBotWebLoginToken('');
+          setBotWebLoginLink('');
+          showNotification('Вход выполнен');
+          clearInterval(id);
+          return;
+        }
+        if (j?.status === 'expired' || j?.status === 'not_found') {
+          setBotWebLoginToken('');
+          setBotWebLoginLink('');
+          showNotification('Токен входа устарел. Нажмите кнопку снова.');
+          clearInterval(id);
+          return;
+        }
+      } catch {
+        /* network hiccup */
+      }
+      if (tries >= 120) {
+        setBotWebLoginToken('');
+        clearInterval(id);
+      }
+    }, 1500);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [botWebLoginToken, tgTelegramUserId, webTelegramUserId]);
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
@@ -3790,6 +3859,39 @@ const OlivierApp = () => {
                       <p className="text-xs text-gray-500 mt-2">
                         Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
                       </p>
+                    </div>
+                    <div className="relative flex items-center gap-2 py-1">
+                      <div className="h-px bg-orange-200 flex-1" />
+                      <span className="text-[11px] text-orange-500 uppercase tracking-wide">или</span>
+                      <div className="h-px bg-orange-200 flex-1" />
+                    </div>
+                    <div className="bg-white rounded-xl p-3 border border-orange-200">
+                      <div className="text-xs text-gray-600 mb-2">
+                        Если Telegram Login не работает, используйте вход через бота (без SMS-кода):
+                      </div>
+                      <button
+                        type="button"
+                        onClick={startBotWebLogin}
+                        disabled={botWebLoginBusy}
+                        className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-semibold disabled:opacity-60"
+                      >
+                        {botWebLoginBusy ? 'Подготовка…' : 'Войти через бота'}
+                      </button>
+                      {botWebLoginLink ? (
+                        <div className="mt-2">
+                          <a
+                            href={botWebLoginLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-blue-700 underline break-all"
+                          >
+                            {botWebLoginLink}
+                          </a>
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            Нажмите ссылку, в Telegram подтвердите вход, затем вернитесь в браузер.
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   </>
                 )}
