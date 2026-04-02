@@ -1107,6 +1107,7 @@ const OlivierApp = () => {
   const [cabinetFridgeGroups, setCabinetFridgeGroups] = useState({});
   /** Приглашение по ссылке t.me/...?startapp=join_CODE */
   const [deeplinkJoinCode, setDeeplinkJoinCode] = useState(null);
+  const tgLoginWidgetHostRef = useRef(null);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   /** Личная группа пользователя (для переключателя кладовых) */
@@ -2131,6 +2132,22 @@ const OlivierApp = () => {
     joinSharedFridgeWithCode(code);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- разовый ввод по ссылке после загрузки состояния
   }, [deeplinkJoinCode, isLoadingState, telegramUserId, supabase]);
+
+  useEffect(() => {
+    if (!showShareModal || telegramUserId || !supabase) return;
+    const host = tgLoginWidgetHostRef.current;
+    if (!host) return;
+    host.innerHTML = '';
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
+    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-userpic', 'false');
+    script.setAttribute('data-request-access', 'write');
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    host.appendChild(script);
+  }, [showShareModal, telegramUserId, supabase]);
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
@@ -3751,12 +3768,7 @@ const OlivierApp = () => {
                       В обычном браузере войдите через Telegram, чтобы работала общая кладовая.
                     </p>
                     <div className="bg-white rounded-xl p-3 border border-orange-200">
-                      <div
-                        id="tg-login-widget"
-                        dangerouslySetInnerHTML={{
-                          __html: `<script async src=\"https://telegram.org/js/telegram-widget.js?22\" data-telegram-login=\"${TELEGRAM_BOT_USERNAME}\" data-size=\"large\" data-userpic=\"false\" data-request-access=\"write\" data-onauth=\"onTelegramAuth(user)\"></script>`
-                        }}
-                      />
+                      <div ref={tgLoginWidgetHostRef} />
                       <p className="text-xs text-gray-500 mt-2">
                         Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
                       </p>
