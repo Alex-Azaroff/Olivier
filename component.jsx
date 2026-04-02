@@ -862,7 +862,49 @@ const hydrateAppState = (raw) => {
 
 const OlivierApp = () => {
   const tg = window.Telegram?.WebApp;
-  const telegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
+  const tgTelegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
+  const [webTelegramUserId, setWebTelegramUserId] = useState(null);
+  const telegramUserId = tgTelegramUserId || webTelegramUserId;
+
+  useEffect(() => {
+    if (tgTelegramUserId) return;
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.telegram_user_id) setWebTelegramUserId(String(j.telegram_user_id));
+      })
+      .catch(() => {});
+  }, [tgTelegramUserId]);
+
+  useEffect(() => {
+    if (tgTelegramUserId) return;
+    // Login Widget callback
+    window.onTelegramAuth = (user) => {
+      fetch('/api/auth/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user || {})
+      })
+        .then((r) => r.json())
+        .then((j) => {
+          if (j?.telegram_user_id) {
+            setWebTelegramUserId(String(j.telegram_user_id));
+            showNotification('Вход выполнен');
+          } else {
+            showNotification('Не удалось войти');
+          }
+        })
+        .catch(() => showNotification('Не удалось войти'));
+    };
+    return () => {
+      try {
+        delete window.onTelegramAuth;
+      } catch (_) {
+        /* */
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tgTelegramUserId]);
 
   /** В Telegram — отступ от верха WebView (contentSafeArea / запас); до mount эффекта не оставлять 10px */
   const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
@@ -3703,9 +3745,23 @@ const OlivierApp = () => {
             {!supabase || !telegramUserId ? (
               <div className="space-y-3 text-sm text-orange-700 bg-orange-50 rounded-xl p-4">
                 {!telegramUserId && (
-                  <p>
-                    <span className="font-semibold">Откройте приложение из Telegram</span> (кнопка / меню бота → Mini App). В обычном браузере Telegram не передаёт ваш аккаунт, поэтому общая кладовая недоступна.
-                  </p>
+                  <>
+                    <p>
+                      <span className="font-semibold">Нет авторизации.</span> В Telegram Mini App ID берётся автоматически.
+                      В обычном браузере войдите через Telegram, чтобы работала общая кладовая.
+                    </p>
+                    <div className="bg-white rounded-xl p-3 border border-orange-200">
+                      <div
+                        id="tg-login-widget"
+                        dangerouslySetInnerHTML={{
+                          __html: `<script async src=\"https://telegram.org/js/telegram-widget.js?22\" data-telegram-login=\"${TELEGRAM_BOT_USERNAME}\" data-size=\"large\" data-userpic=\"false\" data-request-access=\"write\" data-onauth=\"onTelegramAuth(user)\"></script>`
+                        }}
+                      />
+                      <p className="text-xs text-gray-500 mt-2">
+                        Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
+                      </p>
+                    </div>
+                  </>
                 )}
                 {telegramUserId && !supabase && (
                   <p>
