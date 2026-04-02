@@ -916,9 +916,9 @@ const OlivierApp = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** В TG: верх — системный safe area (не max с contentSafeArea: иначе двойной «запас» под UI Telegram и огромная белая полоса) */
+  /** В TG: верх — адаптивно под вырез/статус-бар через safeAreaInset; contentSafeArea только если safe нет */
   const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
-    typeof window !== 'undefined' && window.Telegram?.WebApp ? 40 : 0
+    typeof window !== 'undefined' && window.Telegram?.WebApp ? 47 : 0
   );
   const [telegramBottomInsetPx, setTelegramBottomInsetPx] = useState(0);
 
@@ -938,7 +938,7 @@ const OlivierApp = () => {
       } else if (Number.isFinite(cTop) && cTop > 0) {
         topPad = Math.ceil(cTop) + 4;
       } else {
-        topPad = 40;
+        topPad = 47;
       }
       setTelegramHeaderPadPx(topPad);
 
@@ -3684,8 +3684,8 @@ const OlivierApp = () => {
   const cabinetFridgeIdsOrdered = [
     ...new Set([sharedFridgeId, personalFridgeRow?.id, linkedSharedFridgeId].filter(Boolean))
   ];
-  /* Веб: без env(safe-area-inset-top) — фиксированный отступ как у обычного сайта; TG: высота строки 48 + pb-2 */
-  const webHeaderTopPx = 8;
+  /* Веб: без верхнего отступа у шапки; TG: высота строки 48 + pb-2 (8px) под инсет */
+  const webHeaderTopPx = 0;
   const headerOffsetPx = tg ? Math.max(telegramHeaderPadPx, 0) + 56 : webHeaderTopPx + 56;
 
   return (
@@ -3697,7 +3697,7 @@ const OlivierApp = () => {
           </div>
         </div>
       )}
-      {/* Top Bar: веб — стандартный верхний отступ (челка в браузере не учитываем); TG — inset из WebApp API */}
+      {/* Top Bar: веб — без pt сверху; TG — адаптивный inset под вырез (safeAreaInset) */}
       <div
         className="fixed top-0 left-0 right-0 z-40"
       >
@@ -4331,7 +4331,7 @@ const OlivierApp = () => {
   {/* Content */}
   <div
     className="px-4 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)))]"
-    style={{ paddingTop: `${headerOffsetPx + 8}px` }}
+    style={{ paddingTop: `${headerOffsetPx + (tg ? 8 : 0)}px` }}
     ref={contentRef}
   >
         {/* Main Content */}
