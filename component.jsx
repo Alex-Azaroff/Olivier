@@ -1111,8 +1111,9 @@ const OlivierApp = () => {
   const [fridgeIsPersonal, setFridgeIsPersonal] = useState(false);
   /** Имя при создании семейной кладовой */
   const [createFridgeNameDraft, setCreateFridgeNameDraft] = useState('');
-  const [showShareModal, setShowShareModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  // Share modal merged into account modal; keep flag false until legacy block is removed.
+  const showShareModal = false;
   /** id → { id, invite_code, name, is_personal } для ЛК */
   const [cabinetFridgeGroups, setCabinetFridgeGroups] = useState({});
   /** Приглашение по ссылке t.me/...?startapp=join_CODE */
@@ -2148,7 +2149,7 @@ const OlivierApp = () => {
   }, [deeplinkJoinCode, isLoadingState, telegramUserId, supabase]);
 
   useEffect(() => {
-    if (!showShareModal || telegramUserId || !supabase) return;
+    if (!showAccountModal || telegramUserId || !supabase) return;
     const host = tgLoginWidgetHostRef.current;
     if (!host) return;
     host.innerHTML = '';
@@ -2163,7 +2164,7 @@ const OlivierApp = () => {
     const authUrl = `${window.location.origin}/api/auth/telegram/callback?next=${encodeURIComponent(nextPath)}`;
     script.setAttribute('data-auth-url', authUrl);
     host.appendChild(script);
-  }, [showShareModal, telegramUserId, supabase]);
+  }, [showAccountModal, telegramUserId, supabase]);
 
   useEffect(() => {
     if (tgTelegramUserId || webTelegramUserId) return;
@@ -2240,7 +2241,7 @@ const OlivierApp = () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
     if (fridgeIsPersonal) {
       showNotification('Это личная кладовая — покидать нечего. Создайте приглашение или вступите по коду.');
-      setShowShareModal(false);
+      setShowAccountModal(false);
       return;
     }
     if (!window.confirm('Покинуть семейную кладовую и вернуться в личную?')) {
@@ -2321,7 +2322,7 @@ const OlivierApp = () => {
       showNotification('Вы вышли из общей кладовой');
     } finally {
       setShareBusy(false);
-      setShowShareModal(false);
+      setShowAccountModal(false);
     }
   };
 
@@ -3758,23 +3759,6 @@ const OlivierApp = () => {
                 <User size={22} />
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setShowShareModal(true)}
-              className={`p-2 rounded-xl hover:bg-blue-50 ${
-                supabase && telegramUserId ? 'text-blue-500' : 'text-gray-400'
-              }`}
-              title={
-                !telegramUserId
-                  ? 'Семейный холодильник — откройте из Telegram'
-                  : !supabase
-                    ? 'Нужны переменные Supabase в сборке (Vercel)'
-                    : 'Семейный холодильник'
-              }
-              aria-label="Поделиться кладовой"
-            >
-              <Share2 size={22} />
-            </button>
           </div>
         </div>
       </div>
@@ -4168,6 +4152,166 @@ const OlivierApp = () => {
               {cabinetFridgeIdsOrdered.length === 0 ? (
                 <p className="text-sm text-gray-500">Кладовые ещё не загружены.</p>
               ) : null}
+
+              <div className="pt-2 mt-1 border-t border-gray-200">
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Семейная кладовая</h3>
+                <p className="text-xs text-gray-600 mb-3">
+                  Продукты хранятся в облаке (inventory), изменения синхронизируются в реальном времени.
+                </p>
+                {!supabase || !telegramUserId ? (
+                  <div className="space-y-3 text-sm text-orange-700 bg-orange-50 rounded-xl p-4">
+                    {!telegramUserId && (
+                      <>
+                        <p>
+                          <span className="font-semibold">Нет авторизации.</span> В Telegram Mini App ID берётся автоматически.
+                          В обычном браузере войдите через Telegram, чтобы работала общая кладовая.
+                        </p>
+                        <div className="bg-white rounded-xl p-3 border border-orange-200">
+                          <div ref={tgLoginWidgetHostRef} />
+                          <p className="text-xs text-gray-500 mt-2">
+                            Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
+                          </p>
+                        </div>
+                        <div className="relative flex items-center gap-2 py-1">
+                          <div className="h-px bg-orange-200 flex-1" />
+                          <span className="text-[11px] text-orange-500 uppercase tracking-wide">или</span>
+                          <div className="h-px bg-orange-200 flex-1" />
+                        </div>
+                        <div className="bg-white rounded-xl p-3 border border-orange-200">
+                          <div className="text-xs text-gray-600 mb-2">
+                            Если Telegram Login не работает, используйте вход через бота (без SMS-кода):
+                          </div>
+                          <button
+                            type="button"
+                            onClick={startBotWebLogin}
+                            disabled={botWebLoginBusy}
+                            className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-semibold disabled:opacity-60"
+                          >
+                            {botWebLoginBusy ? 'Подготовка…' : 'Создать ссылку входа'}
+                          </button>
+                          {botWebLoginLink ? (
+                            <div className="mt-2">
+                              <a
+                                href={botWebLoginLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-blue-700 underline break-all"
+                              >
+                                {botWebLoginLink}
+                              </a>
+                              <p className="text-[11px] text-gray-500 mt-1">
+                                Нажмите ссылку, в Telegram подтвердите вход, затем вернитесь в браузер.
+                              </p>
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => copyAccountLine(botWebLoginLink, 'Ссылка скопирована')}
+                                  className="flex-1 border border-gray-300 bg-white text-gray-800 rounded-lg py-2 text-xs font-semibold"
+                                >
+                                  Копировать
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(botWebLoginLink, '_blank', 'noopener,noreferrer')}
+                                  className="flex-1 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg py-2 text-xs font-semibold"
+                                >
+                                  Открыть Telegram
+                                </button>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={checkBotWebLoginNow}
+                                disabled={botWebCheckBusy}
+                                className="mt-2 w-full bg-green-600 text-white rounded-lg py-2 text-xs font-semibold disabled:opacity-60"
+                              >
+                                {botWebCheckBusy ? 'Проверка…' : 'Я подтвердил вход в боте'}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </>
+                    )}
+                    {telegramUserId && !supabase && (
+                      <p>
+                        <span className="font-semibold">Supabase не подключён к этой сборке.</span> В Vercel → Project → Settings → Environment Variables для <strong>Production</strong> задайте{' '}
+                        <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_URL</code> и{' '}
+                        <code className="text-xs bg-white px-1 rounded">VITE_SUPABASE_ANON_KEY</code>, затем сделайте redeploy.
+                      </p>
+                    )}
+                  </div>
+                ) : sharedFridgeId && !fridgeIsPersonal ? (
+                  <div className="space-y-3 bg-gray-50 rounded-xl p-3 border border-gray-200">
+                    <p className="text-sm text-gray-700">
+                      Вы в семейной кладовой{fridgeDisplayName ? ` «${fridgeDisplayName}»` : ''}.
+                    </p>
+                    <div className="flex gap-2 items-center">
+                      <code className="flex-1 text-center text-sm font-mono tracking-widest bg-white rounded-xl py-2 px-2 border border-gray-200">
+                        {sharedInviteCode || '—'}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={copySharedInviteCode}
+                        disabled={!sharedInviteCode}
+                        className="bg-gray-200 text-gray-800 px-3 py-2 rounded-xl font-medium disabled:opacity-50 text-xs"
+                      >
+                        Копировать
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={leaveSharedFridge}
+                      disabled={shareBusy}
+                      className="w-full border border-red-200 text-red-600 py-2 rounded-xl font-semibold disabled:opacity-50 text-sm"
+                    >
+                      {shareBusy ? '…' : 'Покинуть общую кладовую'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3 bg-gray-50 rounded-xl p-3 border border-gray-200">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Название холодильника для семьи</label>
+                      <input
+                        type="text"
+                        value={createFridgeNameDraft}
+                        onChange={(e) => setCreateFridgeNameDraft(e.target.value)}
+                        placeholder="Например: Дом на Мира"
+                        className="w-full p-2.5 border border-gray-200 rounded-xl text-sm"
+                        maxLength={80}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createSharedFridge}
+                      disabled={shareBusy}
+                      className="w-full bg-blue-500 text-white py-2.5 rounded-xl font-semibold disabled:opacity-50 text-sm"
+                    >
+                      {shareBusy ? 'Подождите…' : 'Создать приглашение'}
+                    </button>
+                    <div className="relative flex items-center gap-3">
+                      <div className="flex-1 h-px bg-gray-200" />
+                      <span className="text-xs text-gray-400">или</span>
+                      <div className="flex-1 h-px bg-gray-200" />
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="text"
+                      autoCapitalize="characters"
+                      value={joinCodeDraft}
+                      onChange={(e) => setJoinCodeDraft(e.target.value.toUpperCase())}
+                      placeholder="Код от семьи"
+                      className="w-full p-2.5 border border-gray-200 rounded-xl font-mono tracking-wide uppercase text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={joinSharedFridge}
+                      disabled={shareBusy}
+                      className="w-full bg-green-600 text-white py-2.5 rounded-xl font-semibold disabled:opacity-50 text-sm"
+                    >
+                      {shareBusy ? 'Подождите…' : 'Присоединиться по коду'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
