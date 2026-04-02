@@ -893,7 +893,7 @@ const OlivierApp = () => {
       });
       const j = await r.json();
       if (!j?.ok || !j?.token || !j?.bot_link) {
-        showNotification('Не удалось создать вход через бота');
+        showNotification(`Не удалось создать вход через бота: ${j?.error || r.status}`);
         return;
       }
       setBotWebLoginToken(String(j.token));
@@ -901,7 +901,7 @@ const OlivierApp = () => {
       showNotification('Ссылка готова — откройте бота и подтвердите вход');
       window.open(String(j.bot_link), '_blank', 'noopener,noreferrer');
     } catch {
-      showNotification('Не удалось создать вход через бота');
+      showNotification('Не удалось создать вход через бота: network');
     } finally {
       setBotWebLoginBusy(false);
     }
