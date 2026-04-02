@@ -5048,11 +5048,11 @@ const OlivierApp = () => {
       {/* Bottom Navigation — z-50 выше контента со transform (свайп), иначе карточки перекрывают бар */}
       <div
         className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-2 pt-2 shadow-[0_-4px_16px_rgba(0,0,0,0.07)] ${
-          tg ? '' : 'pb-[max(12px,calc(env(safe-area-inset-bottom,0px)+10px))]'
+          tg ? '' : 'pb-[max(8px,calc(env(safe-area-inset-bottom,0px)+8px))]'
         }`}
         style={
           tg
-            ? { paddingBottom: `${Math.max(12, telegramBottomInsetPx + 10)}px` }
+            ? { paddingBottom: `${Math.max(8, telegramBottomInsetPx + 8)}px` }
             : undefined
         }
       >
