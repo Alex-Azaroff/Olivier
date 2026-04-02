@@ -877,34 +877,14 @@ const OlivierApp = () => {
   }, [tgTelegramUserId]);
 
   useEffect(() => {
-    if (tgTelegramUserId) return;
-    // Login Widget callback
-    window.onTelegramAuth = (user) => {
-      fetch('/api/auth/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(user || {})
-      })
-        .then((r) => r.json())
-        .then((j) => {
-          if (j?.telegram_user_id) {
-            setWebTelegramUserId(String(j.telegram_user_id));
-            showNotification('Вход выполнен');
-          } else {
-            showNotification('Не удалось войти');
-          }
-        })
-        .catch(() => showNotification('Не удалось войти'));
-    };
-    return () => {
-      try {
-        delete window.onTelegramAuth;
-      } catch (_) {
-        /* */
-      }
-    };
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('auth') !== 'failed') return;
+    showNotification('Вход не подтверждён. Попробуйте ещё раз.');
+    p.delete('auth');
+    const q = p.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${q ? `?${q}` : ''}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tgTelegramUserId]);
+  }, []);
 
   /** В Telegram — отступ от верха WebView (contentSafeArea / запас); до mount эффекта не оставлять 10px */
   const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
@@ -2145,7 +2125,9 @@ const OlivierApp = () => {
     script.setAttribute('data-size', 'large');
     script.setAttribute('data-userpic', 'false');
     script.setAttribute('data-request-access', 'write');
-    script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    const nextPath = window.location.pathname + window.location.search;
+    const authUrl = `${window.location.origin}/api/auth/telegram/callback?next=${encodeURIComponent(nextPath)}`;
+    script.setAttribute('data-auth-url', authUrl);
     host.appendChild(script);
   }, [showShareModal, telegramUserId, supabase]);
 
