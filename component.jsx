@@ -3691,10 +3691,11 @@ const OlivierApp = () => {
       <div
         className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
         style={{
-          /* В вебе: шапка у самого верха. В Telegram: учитываем safe area WebView. */
+          /* В вебе: шапка у самого верха. В Telegram: учитываем safe area WebView. +10px вверх от прежнего положения */
+          marginTop: tg ? undefined : '-10px',
           paddingTop: tg
-            ? `${Math.max(telegramHeaderPadPx + 8, 8)}px`
-            : 'max(env(safe-area-inset-top, 0px), 0px)'
+            ? `${Math.max(telegramHeaderPadPx - 10, 0)}px`
+            : '0px'
         }}
       >
         <div className="flex items-center gap-1 min-h-[48px]">
@@ -3747,18 +3748,16 @@ const OlivierApp = () => {
               )}
             </h1>
           )}
-          <div className="shrink-0 flex items-center justify-center gap-0.5">
-            {currentTab === 'pantry' && (
-              <button
-                type="button"
-                onClick={() => setShowAccountModal(true)}
-                className="p-2 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
-                title="Личный кабинет"
-                aria-label="Личный кабинет"
-              >
-                <User size={22} />
-              </button>
-            )}
+          <div className="shrink-0 w-12 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setShowAccountModal(true)}
+              className="p-2 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+              title="Личный кабинет"
+              aria-label="Личный кабинет"
+            >
+              <User size={22} />
+            </button>
           </div>
         </div>
       </div>
@@ -4319,7 +4318,7 @@ const OlivierApp = () => {
 
   {/* Content */}
   <div
-    className="px-4 pt-2 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)))]"
+    className="px-4 pt-2 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)+3px))]"
     ref={contentRef}
   >
         {/* Main Content */}
@@ -5034,7 +5033,7 @@ const OlivierApp = () => {
       )}
 
       {/* Bottom Navigation — z-50 выше контента со transform (свайп), иначе карточки перекрывают бар */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))] shadow-[0_-4px_16px_rgba(0,0,0,0.07)]">
+      <div className="fixed bottom-[3px] left-0 right-0 z-50 bg-white border-t border-gray-200 px-4 pt-2 pb-[env(safe-area-inset-bottom,0px)] shadow-[0_-4px_16px_rgba(0,0,0,0.07)]">
         <div className="flex justify-around">
           <button
             onClick={() => setCurrentTab('pantry')}
