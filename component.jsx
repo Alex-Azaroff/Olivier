@@ -916,30 +916,36 @@ const OlivierApp = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** В Telegram — отступ от верха WebView (contentSafeArea / запас); до mount эффекта не оставлять 10px */
+  /** В TG: верх — системный safe area (не max с contentSafeArea: иначе двойной «запас» под UI Telegram и огромная белая полоса) */
   const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
-    typeof window !== 'undefined' && window.Telegram?.WebApp ? 46 : 0
+    typeof window !== 'undefined' && window.Telegram?.WebApp ? 40 : 0
   );
+  const [telegramBottomInsetPx, setTelegramBottomInsetPx] = useState(0);
 
   useEffect(() => {
     const w = window.Telegram?.WebApp;
     const sync = () => {
       if (!w) {
         setTelegramHeaderPadPx(0);
+        setTelegramBottomInsetPx(0);
         return;
       }
-      const c = Number(w.contentSafeAreaInset?.top);
-      const s = Number(w.safeAreaInset?.top);
-      const fromApi = Math.max(
-        Number.isFinite(c) ? c : 0,
-        Number.isFinite(s) ? s : 0
+      const sTop = Number(w.safeAreaInset?.top);
+      const cTop = Number(w.contentSafeAreaInset?.top);
+      let topPad = 0;
+      if (Number.isFinite(sTop) && sTop > 0) {
+        topPad = Math.ceil(sTop) + 4;
+      } else if (Number.isFinite(cTop) && cTop > 0) {
+        topPad = Math.ceil(cTop) + 4;
+      } else {
+        topPad = 40;
+      }
+      setTelegramHeaderPadPx(topPad);
+
+      const sBot = Number(w.safeAreaInset?.bottom);
+      setTelegramBottomInsetPx(
+        Number.isFinite(sBot) && sBot >= 0 ? Math.ceil(sBot) : 0
       );
-      if (fromApi > 0) {
-        /* inset от Telegram API + небольшой зазор под системную полосу (как max(safe-area, 8px) в вебе) */
-        setTelegramHeaderPadPx(Math.ceil(fromApi) + 8);
-        return;
-      }
-      setTelegramHeaderPadPx(46);
     };
     sync();
     if (!w) return undefined;
@@ -4324,7 +4330,7 @@ const OlivierApp = () => {
 
   {/* Content */}
   <div
-    className="px-4 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)+3px))]"
+    className="px-4 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)))]"
     style={{ paddingTop: `${headerOffsetPx + 8}px` }}
     ref={contentRef}
   >
@@ -5022,7 +5028,7 @@ const OlivierApp = () => {
                 setShowAddModal(true);
               }
             }}
-            className="fixed bottom-20 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-[60]"
+            className="fixed bottom-24 right-4 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors z-[60]"
           >
             <Plus size={24} />
           </button>
@@ -5030,7 +5036,7 @@ const OlivierApp = () => {
           {((currentTab === 'pantry' && pantrySubTab === 'products') || currentTab === 'shopping') && (
             <button
               onClick={() => handleBarcodeScan(currentTab === 'shopping' ? 'shopping' : 'form')}
-              className="fixed bottom-20 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-[60]"
+              className="fixed bottom-24 right-20 bg-gray-700 text-white p-4 rounded-full shadow-lg hover:bg-gray-800 transition-colors z-[60]"
               title="Сканировать штрихкод"
             >
               <ScanLine size={24} />
@@ -5040,14 +5046,23 @@ const OlivierApp = () => {
       )}
 
       {/* Bottom Navigation — z-50 выше контента со transform (свайп), иначе карточки перекрывают бар */}
-      <div className="fixed bottom-[3px] left-0 right-0 z-50 bg-white border-t border-gray-200 px-4 pt-2 pb-[env(safe-area-inset-bottom,0px)] shadow-[0_-4px_16px_rgba(0,0,0,0.07)]">
-        <div className="flex justify-around">
+      <div
+        className={`fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 px-2 pt-2 shadow-[0_-4px_16px_rgba(0,0,0,0.07)] ${
+          tg ? '' : 'pb-[max(12px,calc(env(safe-area-inset-bottom,0px)+10px))]'
+        }`}
+        style={
+          tg
+            ? { paddingBottom: `${Math.max(12, telegramBottomInsetPx + 10)}px` }
+            : undefined
+        }
+      >
+        <div className="flex justify-around items-end max-w-md mx-auto">
           <button
             onClick={() => setCurrentTab('pantry')}
-            className={`flex flex-col items-center gap-1 relative ${currentTab === 'pantry' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 relative ${currentTab === 'pantry' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <Home size={20} />
-            <span className="text-xs">Кладовая</span>
+            <Home size={22} strokeWidth={currentTab === 'pantry' ? 2.25 : 2} />
+            <span className="text-[11px] leading-tight font-medium">Кладовая</span>
             {hasExpiredItems && (
               <div className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
                 !
@@ -5056,24 +5071,24 @@ const OlivierApp = () => {
           </button>
           <button
             onClick={() => setCurrentTab('favorites')}
-            className={`flex flex-col items-center gap-1 ${currentTab === 'favorites' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 ${currentTab === 'favorites' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <Heart size={20} />
-            <span className="text-xs">Избранное</span>
+            <Heart size={22} strokeWidth={currentTab === 'favorites' ? 2.25 : 2} />
+            <span className="text-[11px] leading-tight font-medium">Избранное</span>
           </button>
           <button
             onClick={() => setCurrentTab('recipes')}
-            className={`flex flex-col items-center gap-1 ${currentTab === 'recipes' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 ${currentTab === 'recipes' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <Book size={20} />
-            <span className="text-xs">Рецепты</span>
+            <Book size={22} strokeWidth={currentTab === 'recipes' ? 2.25 : 2} />
+            <span className="text-[11px] leading-tight font-medium">Рецепты</span>
           </button>
           <button
             onClick={() => setCurrentTab('shopping')}
-            className={`flex flex-col items-center gap-1 relative ${currentTab === 'shopping' ? 'text-blue-500' : 'text-gray-400'}`}
+            className={`flex flex-col items-center gap-0.5 min-w-0 flex-1 py-1 relative ${currentTab === 'shopping' ? 'text-blue-500' : 'text-gray-400'}`}
           >
-            <ShoppingCart size={20} />
-            <span className="text-xs">Покупки</span>
+            <ShoppingCart size={22} strokeWidth={currentTab === 'shopping' ? 2.25 : 2} />
+            <span className="text-[11px] leading-tight font-medium">Покупки</span>
             {shoppingItems.length > 0 && (
               <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
                 {shoppingItems.length > 99 ? '99+' : shoppingItems.length}
