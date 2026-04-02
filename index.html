@@ -13,7 +13,8 @@
       name="apple-mobile-web-app-status-bar-style"
       content="default"
     />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="apple-mobile-web-app-title" content="Olivier" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
@@ -25,15 +26,15 @@
         padding: 0;
       }
     </style>
-    <!--
-      defer: не блокируют разбор <body> и entry (иначе в iOS «На экран Домой»
-      белый экран, пока ждут telegram.org / CDN при сетевых задержках).
-    -->
-    <script defer src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      Скрипты в конце body: в WKWebView «На экран Домой» разбор и запуск entry
+      не зависят от загрузки CDN в <head>. Порядок: Telegram → Tailwind → React.
+    -->
+    <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script defer src="https://cdn.tailwindcss.com"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
