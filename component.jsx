@@ -866,15 +866,22 @@ const OlivierApp = () => {
   const [webTelegramUserId, setWebTelegramUserId] = useState(null);
   const telegramUserId = tgTelegramUserId || webTelegramUserId;
 
-  useEffect(() => {
+  const refreshWebAuthUser = useCallback(async () => {
     if (tgTelegramUserId) return;
-    fetch('/api/me')
-      .then((r) => r.json())
-      .then((j) => {
-        if (j?.telegram_user_id) setWebTelegramUserId(String(j.telegram_user_id));
-      })
-      .catch(() => {});
+    try {
+      const r = await fetch('/api/me', { credentials: 'include', cache: 'no-store' });
+      const j = await r.json();
+      if (j?.telegram_user_id) {
+        setWebTelegramUserId(String(j.telegram_user_id));
+      }
+    } catch {
+      /* no-op */
+    }
   }, [tgTelegramUserId]);
+
+  useEffect(() => {
+    refreshWebAuthUser();
+  }, [refreshWebAuthUser]);
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -2130,6 +2137,21 @@ const OlivierApp = () => {
     script.setAttribute('data-auth-url', authUrl);
     host.appendChild(script);
   }, [showShareModal, telegramUserId, supabase]);
+
+  useEffect(() => {
+    if (!showShareModal || tgTelegramUserId || webTelegramUserId) return;
+    // После Telegram Login cookie может появиться без перезагрузки текущей вкладки.
+    // Небольшой polling подхватывает авторизацию и разблокирует облачный режим.
+    let tries = 0;
+    const id = setInterval(async () => {
+      tries += 1;
+      await refreshWebAuthUser();
+      if (tries >= 20 || tgTelegramUserId || webTelegramUserId) {
+        clearInterval(id);
+      }
+    }, 1200);
+    return () => clearInterval(id);
+  }, [showShareModal, tgTelegramUserId, webTelegramUserId, refreshWebAuthUser]);
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
