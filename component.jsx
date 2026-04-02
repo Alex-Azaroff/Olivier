@@ -3691,10 +3691,10 @@ const OlivierApp = () => {
       <div
         className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
         style={{
-          /* В Telegram не суммируем env(safe-area) с contentSafeAreaInset — иначе огромный зазор под «Закрыть» */
+          /* В вебе: шапка у самого верха. В Telegram: учитываем safe area WebView. */
           paddingTop: tg
-            ? `${Math.max(telegramHeaderPadPx + 25, 10)}px`
-            : 'max(1rem, calc(env(safe-area-inset-top, 0px) + 0.75rem))'
+            ? `${Math.max(telegramHeaderPadPx + 8, 8)}px`
+            : 'max(env(safe-area-inset-top, 0px), 0px)'
         }}
       >
         <div className="flex items-center gap-1 min-h-[48px]">
