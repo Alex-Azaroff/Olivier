@@ -753,6 +753,9 @@ const formatShoppingExportLine = (item) => {
 const SWIPE_DELETE_MAX_PX = 88;
 const SWIPE_DELETE_TRIGGER_PX = 44;
 
+const swipeIgnoreSelectors =
+  'button, a, input, textarea, select, [data-no-swipe], label';
+
 /**
  * Свайп влево — удаление (touch). Вертикальный скролл не блокируется, пока жест не распознан как горизонтальный.
  */
@@ -763,6 +766,7 @@ const SwipeToDeleteRow = ({ children, onDelete, disabled = false, className = ''
   const txRef = useRef(0);
   const axisRef = useRef(null);
   const startRef = useRef({ x: 0, y: 0 });
+  const ignoreGestureRef = useRef(false);
   const onDeleteRef = useRef(onDelete);
   onDeleteRef.current = onDelete;
 
@@ -776,12 +780,17 @@ const SwipeToDeleteRow = ({ children, onDelete, disabled = false, className = ''
 
     const onStart = (e) => {
       if (!e.touches?.length) return;
+      const t = e.target;
+      ignoreGestureRef.current = Boolean(
+        t && typeof t.closest === 'function' && t.closest(swipeIgnoreSelectors)
+      );
+      if (ignoreGestureRef.current) return;
       axisRef.current = null;
       setMoving(true);
       startRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     };
     const onMove = (e) => {
-      if (!e.touches?.length) return;
+      if (!e.touches?.length || ignoreGestureRef.current) return;
       const x = e.touches[0].clientX;
       const y = e.touches[0].clientY;
       const dx = x - startRef.current.x;
@@ -797,6 +806,10 @@ const SwipeToDeleteRow = ({ children, onDelete, disabled = false, className = ''
       }
     };
     const onEnd = () => {
+      if (ignoreGestureRef.current) {
+        ignoreGestureRef.current = false;
+        return;
+      }
       if (axisRef.current === 'h' && txRef.current <= -SWIPE_DELETE_TRIGGER_PX) {
         onDeleteRef.current?.();
       }
@@ -838,6 +851,13 @@ const SwipeToDeleteRow = ({ children, onDelete, disabled = false, className = ''
       </div>
     </div>
   );
+};
+
+const fridgeStateUpdatedAtMs = (t) => {
+  if (t == null || t === '') return 0;
+  if (typeof t === 'number' && Number.isFinite(t)) return t;
+  const n = Date.parse(String(t));
+  return Number.isFinite(n) ? n : 0;
 };
 
 const hydrateAppState = (raw) => {
@@ -1709,11 +1729,9 @@ const OlivierApp = () => {
   /** Слияние JSON из fridge_states (блюда, покупки, избранное) с защитой по updated_at */
   const applyRemoteFridgeJson = useCallback((rawState, updatedAt) => {
     if (!rawState || typeof rawState !== 'object') return;
-    if (
-      lastFridgeRemoteAtRef.current &&
-      updatedAt &&
-      updatedAt <= lastFridgeRemoteAtRef.current
-    ) {
+    const remoteMs = fridgeStateUpdatedAtMs(updatedAt);
+    const lastMs = fridgeStateUpdatedAtMs(lastFridgeRemoteAtRef.current);
+    if (lastMs > 0 && remoteMs > 0 && remoteMs <= lastMs) {
       return;
     }
     const h = hydrateAppState(rawState);
@@ -4709,7 +4727,10 @@ const OlivierApp = () => {
                       <div className="space-y-2">
                         {items.map((item) => {
                           const removeShoppingItem = () => {
-                            setShoppingItems((prev) => prev.filter((s) => s.id !== item.id));
+                            const rid = item.id;
+                            setShoppingItems((prev) =>
+                              prev.filter((s) => String(s.id) !== String(rid))
+                            );
                             showNotification('Продукт удален');
                           };
                           return (
@@ -4719,13 +4740,16 @@ const OlivierApp = () => {
                                   <div className="flex items-center gap-3">
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        const updatedItems = shoppingItems.map((shopItem) =>
-                                          shopItem.id === item.id
-                                            ? { ...shopItem, completed: !shopItem.completed }
-                                            : shopItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const sid = item.id;
+                                        setShoppingItems((prev) =>
+                                          prev.map((shopItem) =>
+                                            String(shopItem.id) === String(sid)
+                                              ? { ...shopItem, completed: !shopItem.completed }
+                                              : shopItem
+                                          )
                                         );
-                                        setShoppingItems(updatedItems);
                                       }}
                                       className={`w-6 h-6 min-w-6 min-h-6 shrink-0 aspect-square rounded-full border-2 p-0 appearance-none flex items-center justify-center transition-all duration-200 ${
                                         item.completed
