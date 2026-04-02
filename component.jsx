@@ -2139,19 +2139,33 @@ const OlivierApp = () => {
   }, [showShareModal, telegramUserId, supabase]);
 
   useEffect(() => {
-    if (!showShareModal || tgTelegramUserId || webTelegramUserId) return;
-    // После Telegram Login cookie может появиться без перезагрузки текущей вкладки.
-    // Небольшой polling подхватывает авторизацию и разблокирует облачный режим.
+    if (tgTelegramUserId || webTelegramUserId) return;
+    // Подхватываем сессию после возврата из Telegram auth (popup/переключение вкладки).
+    const onFocus = () => {
+      refreshWebAuthUser();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshWebAuthUser();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [tgTelegramUserId, webTelegramUserId, refreshWebAuthUser]);
+
+  useEffect(() => {
+    if (tgTelegramUserId || webTelegramUserId) return;
+    // Фоновая проверка cookie-сессии даже если модалка закрылась автоматически.
     let tries = 0;
     const id = setInterval(async () => {
       tries += 1;
       await refreshWebAuthUser();
-      if (tries >= 20 || tgTelegramUserId || webTelegramUserId) {
-        clearInterval(id);
-      }
-    }, 1200);
+      if (tries >= 40 || tgTelegramUserId || webTelegramUserId) clearInterval(id);
+    }, 1500);
     return () => clearInterval(id);
-  }, [showShareModal, tgTelegramUserId, webTelegramUserId, refreshWebAuthUser]);
+  }, [tgTelegramUserId, webTelegramUserId, refreshWebAuthUser]);
 
   const leaveSharedFridge = async () => {
     if (!supabase || !telegramUserId || !sharedFridgeId) return;
