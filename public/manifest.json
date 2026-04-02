@@ -1,0 +1,11 @@
+{
+  "name": "Olivier Mini App",
+  "short_name": "Olivier",
+  "description": "Кладовая и список покупок",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#f9fafb",
+  "icons": []
+}
