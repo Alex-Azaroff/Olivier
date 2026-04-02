@@ -935,7 +935,8 @@ const OlivierApp = () => {
         Number.isFinite(s) ? s : 0
       );
       if (fromApi > 0) {
-        setTelegramHeaderPadPx(Math.ceil(fromApi) + 6);
+        /* inset от Telegram API + небольшой зазор под системную полосу (как max(safe-area, 8px) в вебе) */
+        setTelegramHeaderPadPx(Math.ceil(fromApi) + 8);
         return;
       }
       setTelegramHeaderPadPx(46);
@@ -3687,16 +3688,16 @@ const OlivierApp = () => {
           </div>
         </div>
       )}
-      {/* Top Bar: иконки в одном ряду с заголовком, без absolute — ниже выреза/notch */}
+      {/* Top Bar: в вебе — max(safe-area, 8px) по общему паттерну iOS/PWA; в TG — inset из WebApp API */}
       <div
-        className="bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5"
-        style={{
-          /* В вебе: шапка у самого верха. В Telegram: учитываем safe area WebView. +10px вверх от прежнего положения */
-          marginTop: tg ? undefined : '-10px',
-          paddingTop: tg
-            ? `${Math.max(telegramHeaderPadPx - 10, 0)}px`
-            : '0px'
-        }}
+        className={`bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5 ${
+          tg ? '' : 'pt-[max(8px,env(safe-area-inset-top,0px))]'
+        }`}
+        style={
+          tg
+            ? { paddingTop: `${Math.max(telegramHeaderPadPx, 0)}px` }
+            : undefined
+        }
       >
         <div className="flex items-center gap-1 min-h-[48px]">
           <div className="shrink-0 w-12 flex items-center justify-center">
