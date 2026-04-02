@@ -5,7 +5,10 @@ import OlivierApp from '../component.jsx';
 const Root = () => {
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
-    if (!tg) return;
+    const inMiniApp =
+      tg &&
+      (tg.initDataUnsafe?.user != null || String(tg.initData || '').trim() !== '');
+    if (!inMiniApp) return;
 
     tg.ready();
     tg.expand();

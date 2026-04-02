@@ -860,8 +860,14 @@ const hydrateAppState = (raw) => {
   };
 };
 
+/** Скрипт telegram-web-app.js создаёт WebApp и вне Telegram; без initData это обычный веб */
+const isTelegramMiniAppClient = (w) =>
+  !!w &&
+  (w.initDataUnsafe?.user != null || String(w.initData || '').trim() !== '');
+
 const OlivierApp = () => {
-  const tg = window.Telegram?.WebApp;
+  const tgWebApp = window.Telegram?.WebApp;
+  const tg = isTelegramMiniAppClient(tgWebApp) ? tgWebApp : undefined;
   const tgTelegramUserId = tg?.initDataUnsafe?.user?.id?.toString() || null;
   const [webTelegramUserId, setWebTelegramUserId] = useState(null);
   const telegramUserId = tgTelegramUserId || webTelegramUserId;
@@ -918,18 +924,18 @@ const OlivierApp = () => {
 
   /** В TG: верх — адаптивно под вырез/статус-бар через safeAreaInset; contentSafeArea только если safe нет */
   const [telegramHeaderPadPx, setTelegramHeaderPadPx] = useState(() =>
-    typeof window !== 'undefined' && window.Telegram?.WebApp ? 47 : 0
+    typeof window !== 'undefined' && isTelegramMiniAppClient(window.Telegram?.WebApp) ? 47 : 0
   );
   const [telegramBottomInsetPx, setTelegramBottomInsetPx] = useState(0);
 
   useEffect(() => {
     const w = window.Telegram?.WebApp;
+    if (!isTelegramMiniAppClient(w)) {
+      setTelegramHeaderPadPx(0);
+      setTelegramBottomInsetPx(0);
+      return undefined;
+    }
     const sync = () => {
-      if (!w) {
-        setTelegramHeaderPadPx(0);
-        setTelegramBottomInsetPx(0);
-        return;
-      }
       const sTop = Number(w.safeAreaInset?.top);
       const cTop = Number(w.contentSafeAreaInset?.top);
       let topPad = 0;
@@ -948,7 +954,6 @@ const OlivierApp = () => {
       );
     };
     sync();
-    if (!w) return undefined;
     w.onEvent?.('viewportChanged', sync);
     try {
       w.onEvent?.('safeAreaChanged', sync);
