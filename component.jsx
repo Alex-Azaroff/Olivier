@@ -3678,6 +3678,7 @@ const OlivierApp = () => {
   const cabinetFridgeIdsOrdered = [
     ...new Set([sharedFridgeId, personalFridgeRow?.id, linkedSharedFridgeId].filter(Boolean))
   ];
+  const headerOffsetPx = tg ? Math.max(telegramHeaderPadPx, 0) + 56 : 64;
 
   return (
     <div className="min-h-screen bg-gray-50 relative isolate">
@@ -3690,6 +3691,9 @@ const OlivierApp = () => {
       )}
       {/* Top Bar: в вебе — max(safe-area, 8px) по общему паттерну iOS/PWA; в TG — inset из WebApp API */}
       <div
+        className="fixed top-0 left-0 right-0 z-40"
+      >
+        <div
         className={`bg-white shadow-sm px-2 pb-2 flex flex-col gap-0.5 ${
           tg ? '' : 'pt-[max(8px,env(safe-area-inset-top,0px))]'
         }`}
@@ -3760,6 +3764,7 @@ const OlivierApp = () => {
               <User size={22} />
             </button>
           </div>
+        </div>
         </div>
       </div>
 
@@ -4319,7 +4324,8 @@ const OlivierApp = () => {
 
   {/* Content */}
   <div
-    className="px-4 pt-2 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)+3px))]"
+    className="px-4 relative z-0 pb-[max(9rem,calc(7rem+env(safe-area-inset-bottom,0px)+3px))]"
+    style={{ paddingTop: `${headerOffsetPx + 8}px` }}
     ref={contentRef}
   >
         {/* Main Content */}
