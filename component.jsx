@@ -898,8 +898,7 @@ const OlivierApp = () => {
       }
       setBotWebLoginToken(String(j.token));
       setBotWebLoginLink(String(j.bot_link));
-      showNotification('Ссылка готова — откройте бота и подтвердите вход');
-      window.open(String(j.bot_link), '_blank', 'noopener,noreferrer');
+      showNotification('Ссылка готова — откройте Telegram и подтвердите вход в боте');
     } catch {
       showNotification('Не удалось создать вход через бота: network');
     } finally {
@@ -1122,6 +1121,7 @@ const OlivierApp = () => {
   const [botWebLoginLink, setBotWebLoginLink] = useState('');
   const [botWebLoginToken, setBotWebLoginToken] = useState('');
   const [botWebLoginBusy, setBotWebLoginBusy] = useState(false);
+  const [botWebCheckBusy, setBotWebCheckBusy] = useState(false);
   const [joinCodeDraft, setJoinCodeDraft] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   /** Личная группа пользователя (для переключателя кладовых) */
@@ -3643,6 +3643,36 @@ const OlivierApp = () => {
     }
   };
 
+  const checkBotWebLoginNow = async () => {
+    if (!botWebLoginToken || tgTelegramUserId || webTelegramUserId) return;
+    setBotWebCheckBusy(true);
+    try {
+      const r = await fetch(`/api/auth/web-token/status?token=${encodeURIComponent(botWebLoginToken)}`, {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      const j = await r.json();
+      if (j?.status === 'authorized' && j?.telegram_user_id) {
+        setWebTelegramUserId(String(j.telegram_user_id));
+        setBotWebLoginToken('');
+        setBotWebLoginLink('');
+        showNotification('Вход выполнен');
+        return;
+      }
+      if (j?.status === 'expired' || j?.status === 'not_found') {
+        setBotWebLoginToken('');
+        setBotWebLoginLink('');
+        showNotification('Токен входа устарел. Создайте новую ссылку.');
+        return;
+      }
+      showNotification('Подтверждение ещё не получено в боте');
+    } catch {
+      showNotification('Не удалось проверить вход: network');
+    } finally {
+      setBotWebCheckBusy(false);
+    }
+  };
+
   const cabinetFridgeIdsOrdered = [
     ...new Set([sharedFridgeId, personalFridgeRow?.id, linkedSharedFridgeId].filter(Boolean))
   ];
@@ -3875,7 +3905,7 @@ const OlivierApp = () => {
                         disabled={botWebLoginBusy}
                         className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-semibold disabled:opacity-60"
                       >
-                        {botWebLoginBusy ? 'Подготовка…' : 'Войти через бота'}
+                        {botWebLoginBusy ? 'Подготовка…' : 'Создать ссылку входа'}
                       </button>
                       {botWebLoginLink ? (
                         <div className="mt-2">
@@ -3890,6 +3920,30 @@ const OlivierApp = () => {
                           <p className="text-[11px] text-gray-500 mt-1">
                             Нажмите ссылку, в Telegram подтвердите вход, затем вернитесь в браузер.
                           </p>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => copyAccountLine(botWebLoginLink, 'Ссылка скопирована')}
+                              className="flex-1 border border-gray-300 bg-white text-gray-800 rounded-lg py-2 text-xs font-semibold"
+                            >
+                              Копировать
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => window.open(botWebLoginLink, '_blank', 'noopener,noreferrer')}
+                              className="flex-1 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg py-2 text-xs font-semibold"
+                            >
+                              Открыть Telegram
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={checkBotWebLoginNow}
+                            disabled={botWebCheckBusy}
+                            className="mt-2 w-full bg-green-600 text-white rounded-lg py-2 text-xs font-semibold disabled:opacity-60"
+                          >
+                            {botWebCheckBusy ? 'Проверка…' : 'Я подтвердил вход в боте'}
+                          </button>
                         </div>
                       ) : null}
                     </div>
