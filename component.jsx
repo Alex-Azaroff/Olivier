@@ -1807,49 +1807,17 @@ const OlivierApp = () => {
 
     const saveState = async () => {
       try {
-        const { data: row, error: rowErr } = await supabase
-          .from('fridge_states')
-          .select('state, updated_at')
-          .eq('fridge_id', sharedFridgeId)
-          .maybeSingle();
-        if (rowErr) console.error('fridge_states pre-save read', rowErr);
-
-        const remoteMs = fridgeStateUpdatedAtMs(row?.updated_at);
-        const lastMs = fridgeStateUpdatedAtMs(lastFridgeRemoteAtRef.current);
-        const dbState = row?.state && typeof row.state === 'object' ? row.state : null;
-        const merged =
-          dbState && remoteMs > lastMs
-            ? mergeLocalFridgeSlicesWithDbRow(
-                {
-                  preparedMeals,
-                  shoppingItems,
-                  favoriteProducts,
-                  favoriteRecipes,
-                  favoriteMeals,
-                  customRecipes
-                },
-                dbState
-              )
-            : null;
-
-        const pm = merged?.preparedMeals ?? preparedMeals;
-        const si = merged?.shoppingItems ?? shoppingItems;
-        const fp = merged?.favoriteProducts ?? favoriteProducts;
-        const fr = merged?.favoriteRecipes ?? favoriteRecipes;
-        const fm = merged?.favoriteMeals ?? favoriteMeals;
-        const cr = merged?.customRecipes ?? customRecipes;
-
         const stateToSave = {
-          preparedMeals: pm.map((meal) => ({
+          preparedMeals: preparedMeals.map((meal) => ({
             ...meal,
             preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
             expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
           })),
-          shoppingItems: si,
-          favoriteProducts: fp,
-          favoriteRecipes: fr,
-          favoriteMeals: fm,
-          customRecipes: cr,
+          shoppingItems,
+          favoriteProducts,
+          favoriteRecipes,
+          favoriteMeals,
+          customRecipes,
           pantryItems: []
         };
         saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
@@ -1866,14 +1834,6 @@ const OlivierApp = () => {
           console.error('Error saving fridge_states', upsertErr);
           showNotification(`Не удалось сохранить: ${upsertErr.message || 'ошибка'}`);
           return;
-        }
-        if (merged) {
-          setPreparedMeals(merged.preparedMeals);
-          setShoppingItems(merged.shoppingItems);
-          setFavoriteProducts(merged.favoriteProducts);
-          setFavoriteRecipes(merged.favoriteRecipes);
-          setFavoriteMeals(merged.favoriteMeals);
-          setCustomRecipes(merged.customRecipes);
         }
         lastFridgeRemoteAtRef.current = nowIso;
         skipNextFridgePollRef.current = true;
