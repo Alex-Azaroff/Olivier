@@ -71,7 +71,7 @@ const mapInventoryRowToPantryItem = (row) => ({
   name: row.name,
   category: row.category || '🏷️ Прочее',
   measure: normalizeMeasure(row.measure) || row.measure || 'шт.',
-  quantity: Number(row.quantity) || 0,
+  quantity: clampQuantityDecimals(Number(row.quantity) || 0),
   expiryDate: row.expiry_date ? new Date(row.expiry_date) : null,
   shelfLife: row.shelf_life != null ? row.shelf_life : 7,
   autoFilled: Boolean(row.auto_filled),
@@ -95,16 +95,25 @@ const convertQuantity = (quantity, fromMeasure, toMeasure) => {
   }
 };
 
+const MAX_QTY_DECIMALS = 2;
+
 const getStepDecimals = (step) => {
   const s = String(step);
   if (!s.includes('.')) return 0;
   return s.split('.')[1].length;
 };
 
+/** Ограничение дробной части количества (кг, л и т.д.) */
+const clampQuantityDecimals = (q) => {
+  const n = Number(q);
+  if (!isFinite(n)) return 0;
+  return Number(n.toFixed(MAX_QTY_DECIMALS));
+};
+
 const roundToStep = (quantity, step) => {
-  if (!isFinite(quantity) || !isFinite(step) || step === 0) return quantity;
+  if (!isFinite(quantity) || !isFinite(step) || step === 0) return clampQuantityDecimals(quantity);
   const rounded = Math.round(quantity / step) * step;
-  const decimals = getStepDecimals(step);
+  const decimals = Math.min(getStepDecimals(step), MAX_QTY_DECIMALS);
   return Number(rounded.toFixed(decimals));
 };
 
@@ -122,21 +131,15 @@ const getQuantityStep = (measure) => {
   return 1;
 };
 
-// Format quantities for display: choose sensible decimals per measure and trim trailing zeros
+// Format quantities for display: целые для г/мл/шт; для кг/л и др. — не более MAX_QTY_DECIMALS знаков
 const formatQuantityForDisplay = (quantity, measure) => {
   const q = Number(quantity);
   if (!isFinite(q)) return '0';
   const m = normalizeMeasure(measure);
-  // For small-unit integer measures show integer
   if (m === 'г.' || m === 'мл.' || m === 'см³.' || m === 'мг.' || m === 'шт.' || m === 'уп.') {
     return String(Math.round(q));
   }
-
-  // For larger units (kg, l) show up to 3 decimals but trim trailing zeros
-  const decimals = 3;
-  const fixed = q.toFixed(decimals);
-  // remove trailing zeros and optional trailing dot
-  return fixed.replace(/\.0+$|(?<=\.[0-9]*?)0+$/g, '').replace(/\.$/, '');
+  return String(clampQuantityDecimals(q));
 };
 
 const adjustQuantity = (currentQuantity, measure, increment) => {
@@ -674,7 +677,11 @@ const RecipeCard = ({ recipe, pantryItems, isCustom, onAddToCart, onToggleFavori
         {/* Кнопки справа в вертикальном ряду */}
         <div className="flex flex-col gap-3 items-end flex-shrink-0">
           <button
-            onClick={() => onToggleFavorite(recipe)}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(recipe);
+            }}
             className={isFavorite ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}
             title="Добавить в избранное"
           >
@@ -745,7 +752,7 @@ const plainTextStrikethrough = (s) =>
   [...String(s)].map((ch) => (ch === '\n' || ch === '\r' ? ch : ch + U_COMBINING_LONG_STRIKE)).join('');
 
 const formatShoppingExportLine = (item) => {
-  const body = `${item.name} (${item.quantity} ${item.measure})${item.note ? ` - ${item.note}` : ''}`;
+  const body = `${item.name} (${formatQuantityForDisplay(item.quantity, item.measure)} ${item.measure})${item.note ? ` - ${item.note}` : ''}`;
   const text = item.completed ? plainTextStrikethrough(body) : body;
   return `${item.completed ? '✓' : '•'} ${text}`;
 };
@@ -879,6 +886,171 @@ const hydrateAppState = (raw) => {
     customRecipes: raw.customRecipes || []
   };
 };
+
+/**
+ * Синхронизация с сервером: объединяем remote с локальным списком по id, чтобы устаревший JSON
+ * другого клиента не «съедал» блюда, которых нет в его снимке (типичная гонка last-write-wins).
+ * Порядок: сначала как на сервере, затем только локальные id. Не вызывать при смене кладовой.
+ */
+const mergePreparedMealsRemoteWithPrev = (remoteList, prevList) => {
+  const r = remoteList || [];
+  const p = prevList || [];
+  const remoteIds = new Set(r.map((m) => String(m?.id)));
+  const out = r.map((m) => ({ ...m }));
+  for (const m of p) {
+    if (m?.id == null) continue;
+    const sid = String(m.id);
+    if (!remoteIds.has(sid)) out.push({ ...m });
+  }
+  return out;
+};
+
+const normalizeFavoriteProductKey = (x) => String(x?.name || '').trim().toLowerCase();
+
+const mergeFavoriteProductsRemoteWithPrev = (remoteList, prevList) => {
+  const r = remoteList || [];
+  const p = prevList || [];
+  const seen = new Set(r.map((x) => normalizeFavoriteProductKey(x)).filter(Boolean));
+  const out = r.map((x) => ({ ...x }));
+  for (const x of p) {
+    const k = normalizeFavoriteProductKey(x);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...x });
+  }
+  return out;
+};
+
+const mergeFavoriteRecipesRemoteWithPrev = (remoteList, prevList) => {
+  const r = remoteList || [];
+  const p = prevList || [];
+  const seen = new Set(r.map((x) => String(x?.id ?? '')).filter(Boolean));
+  const out = r.map((x) => ({ ...x }));
+  for (const x of p) {
+    const k = String(x?.id ?? '');
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...x });
+  }
+  return out;
+};
+
+const mergeFavoriteMealsRemoteWithPrev = (remoteList, prevList) => {
+  const r = remoteList || [];
+  const p = prevList || [];
+  const seen = new Set(r.map((x) => String(x?.id ?? '')).filter(Boolean));
+  const out = r.map((x) => ({ ...x }));
+  for (const x of p) {
+    const k = String(x?.id ?? '');
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...x });
+  }
+  return out;
+};
+
+const mergeShoppingItemsRemoteWithPrev = (remoteList, prevList) => {
+  const r = remoteList || [];
+  const p = prevList || [];
+  const seen = new Set(r.map((x) => String(x?.id ?? '')).filter(Boolean));
+  const out = r.map((x) => ({ ...x }));
+  for (const x of p) {
+    const k = String(x?.id ?? '');
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...x });
+  }
+  return out;
+};
+
+/** Перед upsert: если в облаке уже более свежая версия (другая вкладка / веб vs TG), подмешиваем её, иначе сохранение затрёт чужие добавления. */
+const mergeLocalFridgeSlicesWithDbRow = (local, dbRaw) => {
+  const h = hydrateAppState(dbRaw || {});
+  if (!h) return local;
+  return {
+    preparedMeals: mergePreparedMealsRemoteWithPrev(h.preparedMeals || [], local.preparedMeals || []),
+    shoppingItems: mergeShoppingItemsRemoteWithPrev(h.shoppingItems || [], local.shoppingItems || []),
+    favoriteProducts: mergeFavoriteProductsRemoteWithPrev(h.favoriteProducts || [], local.favoriteProducts || []),
+    favoriteRecipes: mergeFavoriteRecipesRemoteWithPrev(h.favoriteRecipes || [], local.favoriteRecipes || []),
+    favoriteMeals: mergeFavoriteMealsRemoteWithPrev(h.favoriteMeals || [], local.favoriteMeals || []),
+    customRecipes: mergeFavoriteRecipesRemoteWithPrev(h.customRecipes || [], local.customRecipes || [])
+  };
+};
+
+/** Обновляет только поля, явно заданные в JSON кладовой (иначе частичный state обнулял избранное). */
+const mergeNonPantryFromFridgeRaw = (rawState, setters, options = {}) => {
+  const { mergeWithLocalUnion = false } = options;
+  if (!rawState || typeof rawState !== 'object') return;
+  const h = hydrateAppState(rawState);
+  if (!h) return;
+  const {
+    setPreparedMeals,
+    setShoppingItems,
+    setFavoriteProducts,
+    setFavoriteRecipes,
+    setFavoriteMeals,
+    setCustomRecipes
+  } = setters;
+  if (Object.prototype.hasOwnProperty.call(rawState, 'preparedMeals')) {
+    const remote = h.preparedMeals || [];
+    if (mergeWithLocalUnion) {
+      setPreparedMeals((prev) => mergePreparedMealsRemoteWithPrev(remote, prev));
+    } else {
+      setPreparedMeals(remote);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState, 'shoppingItems')) {
+    setShoppingItems(Array.isArray(h.shoppingItems) ? h.shoppingItems : []);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteProducts')) {
+    if (mergeWithLocalUnion) {
+      setFavoriteProducts((prev) => mergeFavoriteProductsRemoteWithPrev(h.favoriteProducts || [], prev));
+    } else {
+      setFavoriteProducts(h.favoriteProducts || []);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteRecipes')) {
+    if (mergeWithLocalUnion) {
+      setFavoriteRecipes((prev) => mergeFavoriteRecipesRemoteWithPrev(h.favoriteRecipes || [], prev));
+    } else {
+      setFavoriteRecipes(h.favoriteRecipes || []);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteMeals')) {
+    if (mergeWithLocalUnion) {
+      setFavoriteMeals((prev) => mergeFavoriteMealsRemoteWithPrev(h.favoriteMeals || [], prev));
+    } else {
+      setFavoriteMeals(h.favoriteMeals || []);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(rawState, 'customRecipes')) {
+    setCustomRecipes(h.customRecipes || []);
+  }
+};
+
+const recipeIdsEqual = (a, b) => String(a) === String(b);
+
+/**
+ * Несколько строк в fridge_members ломают .maybeSingle() в PostgREST.
+ * Выбираем fridge_id согласованно: облако → localStorage → личная → первая строка.
+ */
+function pickFridgeIdFromMemberRows(rows, { storedLinked, localLinked, personalFridgeId } = {}) {
+  const raw = (rows || []).map((r) => r?.fridge_id).filter(Boolean);
+  const unique = [...new Set(raw.map(String))];
+  if (unique.length === 0) return null;
+  if (unique.length === 1) return unique[0];
+  const prefer = (id) => {
+    if (id == null || id === '') return null;
+    const s = String(id).trim();
+    return s && unique.includes(s) ? s : null;
+  };
+  return (
+    prefer(storedLinked) ||
+    prefer(localLinked) ||
+    prefer(personalFridgeId) ||
+    unique[0]
+  );
+}
 
 /** Скрипт telegram-web-app.js создаёт WebApp и вне Telegram; без initData это обычный веб */
 const isTelegramMiniAppClient = (w) =>
@@ -1121,6 +1293,10 @@ const OlivierApp = () => {
   const [libraryFavoriteIds, setLibraryFavoriteIds] = useState(new Set());
   const [myLibraryFavorites, setMyLibraryFavorites] = useState([]);
   const [notification, setNotification] = useState('');
+  const showNotification = useCallback((message, durationMs = 1000) => {
+    setNotification(message);
+    setTimeout(() => setNotification(''), durationMs);
+  }, []);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -1277,7 +1453,7 @@ const OlivierApp = () => {
       name: payload.name,
       category: payload.category || '🏷️ Прочее',
       measure: normalizeMeasure(payload.measure) || payload.measure || 'шт.',
-      quantity: payload.quantity,
+      quantity: clampQuantityDecimals(payload.quantity),
       expiry_date: payload.expiryDate ? payload.expiryDate.toISOString() : null,
       shelf_life: payload.shelfLife != null ? payload.shelfLife : 7,
       auto_filled: Boolean(payload.autoFilled),
@@ -1293,7 +1469,7 @@ const OlivierApp = () => {
     if (patch.name != null) dbPatch.name = patch.name;
     if (patch.category != null) dbPatch.category = patch.category;
     if (patch.measure != null) dbPatch.measure = normalizeMeasure(patch.measure) || patch.measure;
-    if (patch.quantity != null) dbPatch.quantity = patch.quantity;
+    if (patch.quantity != null) dbPatch.quantity = clampQuantityDecimals(patch.quantity);
     if (patch.expiryDate !== undefined) {
       dbPatch.expiry_date = patch.expiryDate ? patch.expiryDate.toISOString() : null;
     }
@@ -1382,8 +1558,8 @@ const OlivierApp = () => {
       }
 
       try {
-        const [{ data: membership, error: memErr }, { data: personalGrpEarly }] = await Promise.all([
-          supabase.from('fridge_members').select('fridge_id').eq('telegram_user_id', telegramUserId).maybeSingle(),
+        const [{ data: memberRows, error: memErr }, { data: personalGrpEarly }] = await Promise.all([
+          supabase.from('fridge_members').select('fridge_id').eq('telegram_user_id', telegramUserId),
           supabase
             .from('fridge_groups')
             .select('id, name')
@@ -1407,20 +1583,27 @@ const OlivierApp = () => {
             name: personalGrpEarly.name || 'Личная кладовая'
           });
         }
-        const storedLinked =
+        const storedLinkedRaw =
           usEarly?.state && typeof usEarly.state === 'object' ? usEarly.state.linked_shared_fridge_id : null;
-        const linkedFallback =
-          loadLinkedSharedFridgeId(telegramUserId) ||
-          (typeof storedLinked === 'string' && storedLinked ? storedLinked : null);
+        const storedLinked =
+          typeof storedLinkedRaw === 'string' && storedLinkedRaw.trim() ? storedLinkedRaw.trim() : null;
+        const linkedFallback = storedLinked || loadLinkedSharedFridgeId(telegramUserId);
 
-        const applyNonPantryFromHydrate = (h) => {
-          if (!h) return;
-          setPreparedMeals(h.preparedMeals || []);
-          setShoppingItems(h.shoppingItems || []);
-          setFavoriteProducts(h.favoriteProducts || []);
-          setFavoriteRecipes(h.favoriteRecipes || []);
-          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-          setCustomRecipes(h.customRecipes || []);
+        const memberFid = pickFridgeIdFromMemberRows(memberRows, {
+          storedLinked,
+          localLinked: loadLinkedSharedFridgeId(telegramUserId),
+          personalFridgeId: personalGrpEarly?.id || null
+        });
+
+        const applyNonPantryFromHydrate = (rawState) => {
+          mergeNonPantryFromFridgeRaw(rawState, {
+            setPreparedMeals,
+            setShoppingItems,
+            setFavoriteProducts,
+            setFavoriteRecipes,
+            setFavoriteMeals,
+            setCustomRecipes
+          });
         };
 
         const migrateLegacyPantryRows = async (fridgeId, legacyItems) => {
@@ -1439,8 +1622,8 @@ const OlivierApp = () => {
           }
         };
 
-        if (membership?.fridge_id) {
-          const fid = membership.fridge_id;
+        if (memberFid) {
+          const fid = memberFid;
           setSharedFridgeId(fid);
 
           const { data: grp } = await supabase
@@ -1474,7 +1657,16 @@ const OlivierApp = () => {
           const stateKeys = Object.keys(rawState);
           const h = stateKeys.length > 0 ? hydrateAppState(rawState) : null;
           if (h && stateKeys.length > 0) {
-            applyNonPantryFromHydrate(h);
+            applyNonPantryFromHydrate(rawState);
+            const lf = loadLocalState(telegramUserId, fid);
+            if (lf) {
+              if (!Object.prototype.hasOwnProperty.call(rawState, 'favoriteProducts') && lf.favoriteProducts?.length) {
+                setFavoriteProducts(lf.favoriteProducts);
+              }
+              if (!Object.prototype.hasOwnProperty.call(rawState, 'favoriteRecipes') && lf.favoriteRecipes?.length) {
+                setFavoriteRecipes(lf.favoriteRecipes);
+              }
+            }
           } else {
             const lf = loadLocalState(telegramUserId, fid);
             if (lf) {
@@ -1587,8 +1779,8 @@ const OlivierApp = () => {
               .select('state, updated_at')
               .eq('fridge_id', personalGrp.id)
               .maybeSingle();
-            const h2 = fsNew?.state ? hydrateAppState(fsNew.state) : null;
-            if (h2) applyNonPantryFromHydrate(h2);
+            const rawFs = fsNew?.state && typeof fsNew.state === 'object' ? fsNew.state : null;
+            if (rawFs) applyNonPantryFromHydrate(rawFs);
             if (fsNew?.updated_at) lastFridgeRemoteAtRef.current = fsNew.updated_at;
           }
         }
@@ -1615,22 +1807,54 @@ const OlivierApp = () => {
 
     const saveState = async () => {
       try {
+        const { data: row, error: rowErr } = await supabase
+          .from('fridge_states')
+          .select('state, updated_at')
+          .eq('fridge_id', sharedFridgeId)
+          .maybeSingle();
+        if (rowErr) console.error('fridge_states pre-save read', rowErr);
+
+        const remoteMs = fridgeStateUpdatedAtMs(row?.updated_at);
+        const lastMs = fridgeStateUpdatedAtMs(lastFridgeRemoteAtRef.current);
+        const dbState = row?.state && typeof row.state === 'object' ? row.state : null;
+        const merged =
+          dbState && remoteMs > lastMs
+            ? mergeLocalFridgeSlicesWithDbRow(
+                {
+                  preparedMeals,
+                  shoppingItems,
+                  favoriteProducts,
+                  favoriteRecipes,
+                  favoriteMeals,
+                  customRecipes
+                },
+                dbState
+              )
+            : null;
+
+        const pm = merged?.preparedMeals ?? preparedMeals;
+        const si = merged?.shoppingItems ?? shoppingItems;
+        const fp = merged?.favoriteProducts ?? favoriteProducts;
+        const fr = merged?.favoriteRecipes ?? favoriteRecipes;
+        const fm = merged?.favoriteMeals ?? favoriteMeals;
+        const cr = merged?.customRecipes ?? customRecipes;
+
         const stateToSave = {
-          preparedMeals: preparedMeals.map((meal) => ({
+          preparedMeals: pm.map((meal) => ({
             ...meal,
             preparedDate: meal.preparedDate ? meal.preparedDate.toISOString() : null,
             expiresAt: meal.expiresAt ? meal.expiresAt.toISOString() : null
           })),
-          shoppingItems,
-          favoriteProducts,
-          favoriteRecipes,
-          favoriteMeals,
-          customRecipes,
+          shoppingItems: si,
+          favoriteProducts: fp,
+          favoriteRecipes: fr,
+          favoriteMeals: fm,
+          customRecipes: cr,
           pantryItems: []
         };
         saveLocalState(stateToSave, telegramUserId, sharedFridgeId);
         const nowIso = new Date().toISOString();
-        await supabase.from('fridge_states').upsert(
+        const { error: upsertErr } = await supabase.from('fridge_states').upsert(
           {
             fridge_id: sharedFridgeId,
             state: stateToSave,
@@ -1638,10 +1862,24 @@ const OlivierApp = () => {
           },
           { onConflict: 'fridge_id' }
         );
+        if (upsertErr) {
+          console.error('Error saving fridge_states', upsertErr);
+          showNotification(`Не удалось сохранить: ${upsertErr.message || 'ошибка'}`);
+          return;
+        }
+        if (merged) {
+          setPreparedMeals(merged.preparedMeals);
+          setShoppingItems(merged.shoppingItems);
+          setFavoriteProducts(merged.favoriteProducts);
+          setFavoriteRecipes(merged.favoriteRecipes);
+          setFavoriteMeals(merged.favoriteMeals);
+          setCustomRecipes(merged.customRecipes);
+        }
         lastFridgeRemoteAtRef.current = nowIso;
         skipNextFridgePollRef.current = true;
       } catch (e) {
         console.error('Error saving fridge_states', e);
+        showNotification('Не удалось сохранить данные кладовой');
       }
     };
 
@@ -1656,7 +1894,8 @@ const OlivierApp = () => {
     favoriteRecipes,
     favoriteMeals,
     customRecipes,
-    preparedMeals
+    preparedMeals,
+    showNotification
   ]);
 
   // Локальное + user_states (в т.ч. pantry в JSON), когда нет полного облачного режима
@@ -1734,27 +1973,18 @@ const OlivierApp = () => {
     if (lastMs > 0 && remoteMs > 0 && remoteMs <= lastMs) {
       return;
     }
-    const h = hydrateAppState(rawState);
-    if (!h) return;
-    // Не затирать список покупок / блюда, если в JSON ключа нет (частичное тело или {})
-    if (Object.prototype.hasOwnProperty.call(rawState, 'preparedMeals')) {
-      setPreparedMeals(h.preparedMeals || []);
-    }
-    if (Object.prototype.hasOwnProperty.call(rawState, 'shoppingItems')) {
-      setShoppingItems(Array.isArray(h.shoppingItems) ? h.shoppingItems : []);
-    }
-    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteProducts')) {
-      setFavoriteProducts(h.favoriteProducts || []);
-    }
-    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteRecipes')) {
-      setFavoriteRecipes(h.favoriteRecipes || []);
-    }
-    if (Object.prototype.hasOwnProperty.call(rawState, 'favoriteMeals')) {
-      setFavoriteMeals(h.favoriteMeals || []);
-    }
-    if (Object.prototype.hasOwnProperty.call(rawState, 'customRecipes')) {
-      setCustomRecipes(h.customRecipes || []);
-    }
+    mergeNonPantryFromFridgeRaw(
+      rawState,
+      {
+        setPreparedMeals,
+        setShoppingItems,
+        setFavoriteProducts,
+        setFavoriteRecipes,
+        setFavoriteMeals,
+        setCustomRecipes
+      },
+      { mergeWithLocalUnion: true }
+    );
     lastFridgeRemoteAtRef.current = updatedAt;
   }, []);
 
@@ -1847,11 +2077,6 @@ const OlivierApp = () => {
     };
   }, [supabase, telegramUserId, sharedFridgeId, isLoadingState, applyRemoteFridgeJson]);
 
-  const showNotification = (message, durationMs = 1000) => {
-    setNotification(message);
-    setTimeout(() => setNotification(''), durationMs);
-  };
-
   const switchToFridgeId = async (targetId) => {
     if (!supabase || !telegramUserId || !targetId) return;
     const fid = String(targetId).trim();
@@ -1908,12 +2133,23 @@ const OlivierApp = () => {
       const stateKeys = Object.keys(rawState);
       const h = stateKeys.length > 0 ? hydrateAppState(rawState) : null;
       if (h && stateKeys.length > 0) {
-        setPreparedMeals(h.preparedMeals || []);
-        setShoppingItems(h.shoppingItems || []);
-        setFavoriteProducts(h.favoriteProducts || []);
-        setFavoriteRecipes(h.favoriteRecipes || []);
-        if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-        setCustomRecipes(h.customRecipes || []);
+        mergeNonPantryFromFridgeRaw(rawState, {
+          setPreparedMeals,
+          setShoppingItems,
+          setFavoriteProducts,
+          setFavoriteRecipes,
+          setFavoriteMeals,
+          setCustomRecipes
+        });
+        const lf = loadLocalState(telegramUserId, fid);
+        if (lf) {
+          if (!Object.prototype.hasOwnProperty.call(rawState, 'favoriteProducts') && lf.favoriteProducts?.length) {
+            setFavoriteProducts(lf.favoriteProducts);
+          }
+          if (!Object.prototype.hasOwnProperty.call(rawState, 'favoriteRecipes') && lf.favoriteRecipes?.length) {
+            setFavoriteRecipes(lf.favoriteRecipes);
+          }
+        }
       } else {
         const lf = loadLocalState(telegramUserId, fid);
         if (lf) {
@@ -1949,16 +2185,20 @@ const OlivierApp = () => {
     }
     setShareBusy(true);
     try {
-      const { data: existing } = await supabase
+      const { data: memberRows, error: memSelErr } = await supabase
         .from('fridge_members')
         .select('fridge_id')
-        .eq('telegram_user_id', telegramUserId)
-        .maybeSingle();
-      if (!existing?.fridge_id) {
+        .eq('telegram_user_id', telegramUserId);
+      if (memSelErr) console.error('fridge_members select', memSelErr);
+      const oldFid = pickFridgeIdFromMemberRows(memberRows, {
+        storedLinked: linkedSharedFridgeId,
+        localLinked: loadLinkedSharedFridgeId(telegramUserId),
+        personalFridgeId: personalFridgeRow?.id || null
+      });
+      if (!oldFid) {
         showNotification('Нет активной кладовой');
         return;
       }
-      const oldFid = existing.fridge_id;
       const { data: gRow } = await supabase
         .from('fridge_groups')
         .select('is_personal')
@@ -2081,16 +2321,21 @@ const OlivierApp = () => {
     if (!supabase || !telegramUserId) return;
     setShareBusy(true);
     try {
-      const { data: existing } = await supabase
+      const { data: memberRows, error: memJoinErr } = await supabase
         .from('fridge_members')
         .select('fridge_id')
-        .eq('telegram_user_id', telegramUserId)
-        .maybeSingle();
-      if (existing?.fridge_id) {
+        .eq('telegram_user_id', telegramUserId);
+      if (memJoinErr) console.error('fridge_members select', memJoinErr);
+      const currentFid = pickFridgeIdFromMemberRows(memberRows, {
+        storedLinked: linkedSharedFridgeId,
+        localLinked: loadLinkedSharedFridgeId(telegramUserId),
+        personalFridgeId: personalFridgeRow?.id || null
+      });
+      if (currentFid) {
         const { data: curG } = await supabase
           .from('fridge_groups')
           .select('is_personal')
-          .eq('id', existing.fridge_id)
+          .eq('id', currentFid)
           .maybeSingle();
         if (!curG?.is_personal) {
           showNotification('Сначала выйдите из текущей общей кладовой');
@@ -2106,7 +2351,7 @@ const OlivierApp = () => {
         showNotification('Код не найден');
         return;
       }
-      const { error: mErr } = existing?.fridge_id
+      const { error: mErr } = currentFid
         ? await supabase
             .from('fridge_members')
             .update({ fridge_id: group.id })
@@ -2124,16 +2369,15 @@ const OlivierApp = () => {
         .select('state, updated_at')
         .eq('fridge_id', group.id)
         .maybeSingle();
-      if (fsRow?.state) {
-        const h = hydrateAppState(fsRow.state);
-        if (h) {
-          setPreparedMeals(h.preparedMeals || []);
-          setShoppingItems(h.shoppingItems || []);
-          setFavoriteProducts(h.favoriteProducts);
-          setFavoriteRecipes(h.favoriteRecipes);
-          if (h.favoriteMeals) setFavoriteMeals(h.favoriteMeals);
-          setCustomRecipes(h.customRecipes);
-        }
+      if (fsRow?.state && typeof fsRow.state === 'object') {
+        mergeNonPantryFromFridgeRaw(fsRow.state, {
+          setPreparedMeals,
+          setShoppingItems,
+          setFavoriteProducts,
+          setFavoriteRecipes,
+          setFavoriteMeals,
+          setCustomRecipes
+        });
         lastFridgeRemoteAtRef.current = fsRow.updated_at;
       }
       const { data: gMeta } = await supabase
@@ -2713,18 +2957,19 @@ const OlivierApp = () => {
     const shelfLife = product.shelfLife != null ? product.shelfLife : 7;
     const defaultExpiry = expiryDate || new Date(Date.now() + shelfLife * 24 * 60 * 60 * 1000);
     const incomingMeasure = normalizeMeasure(product.measure) || product.measure || 'шт.';
+    const qtyIn = clampQuantityDecimals(quantity);
     const payload = {
       name: product.name,
       category: product.category || '🏷️ Прочее',
       measure: incomingMeasure,
-      quantity,
+      quantity: qtyIn,
       expiryDate: defaultExpiry,
       shelfLife,
       autoFilled: !expiryDate
     };
 
     if (existingItem) {
-      const addedQty = convertQuantity(quantity, incomingMeasure, existingItem.measure);
+      const addedQty = convertQuantity(qtyIn, incomingMeasure, existingItem.measure);
       const newQ = roundToStep(Number(existingItem.quantity) + addedQty, getQuantityStep(existingItem.measure));
       const ex = existingItem.expiryDate;
       const ne = defaultExpiry;
@@ -2761,7 +3006,7 @@ const OlivierApp = () => {
         );
       }
       showNotification(
-        `${product.name}: +${formatQuantityForDisplay(quantity, incomingMeasure)} ${incomingMeasure} → всего ${formatQuantityForDisplay(newQ, existingItem.measure)} ${existingItem.measure}`
+        `${product.name}: +${formatQuantityForDisplay(qtyIn, incomingMeasure)} ${incomingMeasure} → всего ${formatQuantityForDisplay(newQ, existingItem.measure)} ${existingItem.measure}`
       );
     } else if (usesCloudInventory) {
       const { data, error } = await insertInventoryRow(sharedFridgeId, payload);
@@ -2777,7 +3022,7 @@ const OlivierApp = () => {
         id: Date.now(),
         ...product,
         measure: payload.measure,
-        quantity,
+        quantity: qtyIn,
         expiryDate: defaultExpiry,
         autoFilled: !expiryDate
       };
@@ -2793,11 +3038,12 @@ const OlivierApp = () => {
   };
 
   const addToShopping = (product, quantity = 1) => {
+    const q = clampQuantityDecimals(quantity);
     const existingItem = shoppingItems.find(item => item.name === product.name && !item.completed);
     if (existingItem) {
       const updatedItems = shoppingItems.map(item =>
         item.id === existingItem.id
-          ? { ...item, quantity: item.quantity + quantity }
+          ? { ...item, quantity: clampQuantityDecimals(item.quantity + q) }
           : item
       );
       setShoppingItems(updatedItems);
@@ -2808,7 +3054,7 @@ const OlivierApp = () => {
     const newItem = {
       id: Date.now() + Math.random(),
       ...product,
-      quantity,
+      quantity: q,
       completed: false,
       addedAt: new Date()
     };
@@ -2840,16 +3086,14 @@ const OlivierApp = () => {
     // If product exists in DB but user selected a different measure in the form,
     // respect user's measure and convert quantity to the stored measure (or store with user's measure).
     let measureToStore = selectedProduct.measure;
+    if (addFormData.measure) {
+      measureToStore = addFormData.measure;
+    }
     // Allow the input to be an empty/partial string while typing; only coerce to number when storing
     let qtyToStore = Number(addFormData.quantity);
-    const defaultStep = getQuantityStep(addFormData.measure || selectedProduct.measure) || 1;
+    const defaultStep = getQuantityStep(measureToStore || selectedProduct.measure) || 1;
     if (!isFinite(qtyToStore) || qtyToStore <= 0) qtyToStore = defaultStep;
-    if (addFormData.measure) {
-      // prefer to store the measure the user selected
-      measureToStore = addFormData.measure;
-      // if the DB product had a different measure and we want to keep DB measure, convert instead
-      // but better to store as user selected measure so we don't surprise the user
-    }
+    qtyToStore = roundToStep(clampQuantityDecimals(qtyToStore), getQuantityStep(measureToStore) || defaultStep);
     // Build a product object that uses the chosen measure
     const productToUse = { ...selectedProduct, measure: measureToStore };
 
@@ -2902,12 +3146,13 @@ const OlivierApp = () => {
   };
 
   const toggleFavoriteRecipe = (recipe) => {
-    const isFavorite = favoriteRecipes.some(fav => fav.id === recipe.id);
+    const rid = recipe?.id;
+    const isFavorite = favoriteRecipes.some((fav) => recipeIdsEqual(fav.id, rid));
     if (isFavorite) {
-      setFavoriteRecipes(prev => prev.filter(fav => fav.id !== recipe.id));
+      setFavoriteRecipes((prev) => prev.filter((fav) => !recipeIdsEqual(fav.id, rid)));
       showNotification(`${recipe.name} удален из избранного`);
     } else {
-      setFavoriteRecipes(prev => [...prev, recipe]);
+      setFavoriteRecipes((prev) => [...prev, recipe]);
       showNotification(`${recipe.name} добавлен в избранное`);
     }
   };
@@ -3134,7 +3379,7 @@ const OlivierApp = () => {
             name: ingredient.name,
             category: category,
             measure: ingredient.measure,
-            quantity: needed,
+            quantity: clampQuantityDecimals(needed),
             note: `для ${recipe.name}`,
             completed: false
           };
@@ -3201,7 +3446,7 @@ const OlivierApp = () => {
         const addedQty = convertQuantity(item.quantity, item.measure, existingPantryItem.measure);
         localPantry = localPantry.map((pantryItem) =>
           pantryItem.name === item.name
-            ? { ...pantryItem, quantity: pantryItem.quantity + addedQty }
+            ? { ...pantryItem, quantity: clampQuantityDecimals(pantryItem.quantity + addedQty) }
             : pantryItem
         );
       } else {
@@ -3210,7 +3455,7 @@ const OlivierApp = () => {
           name: item.name,
           category: item.category,
           measure: item.measure,
-          quantity: item.quantity,
+          quantity: clampQuantityDecimals(item.quantity),
           expiryDate,
           addedAt: new Date()
         };
@@ -3407,7 +3652,7 @@ const OlivierApp = () => {
         });
       }
 
-      const qty = parseFloat(needQuantity) || 1;
+      const qty = clampQuantityDecimals(parseFloat(needQuantity) || 1);
       itemsToAdd.push({
         id: Date.now() + Math.random(),
         name: ingredient.name,
@@ -3432,7 +3677,9 @@ const OlivierApp = () => {
         const existing = updated.find(i => i.name === newItem.name && !i.completed);
         if (existing) {
           updated = updated.map(i =>
-            i.id === existing.id ? { ...i, quantity: i.quantity + newItem.quantity } : i
+            i.id === existing.id
+              ? { ...i, quantity: clampQuantityDecimals(i.quantity + newItem.quantity) }
+              : i
           );
         } else {
           updated.push(newItem);
@@ -3575,8 +3822,9 @@ const OlivierApp = () => {
       1,
       Math.floor(Number(mealFormData.portions)) || defaultMealPortionsForCategory(category)
     );
+    const mealId = Date.now();
     const newMeal = {
-      id: Date.now(),
+      id: mealId,
       name,
       category,
       preparedDate,
@@ -3609,7 +3857,7 @@ const OlivierApp = () => {
       name: item.name,
       category: item.category,
       measure: item.measure,
-      quantity: item.quantity,
+      quantity: clampQuantityDecimals(item.quantity),
       completed: false,
       addedAt: new Date()
     };
@@ -3617,6 +3865,18 @@ const OlivierApp = () => {
     setShoppingItems(prev => [...prev, cartItem]);
     showNotification(`${item.name} добавлен в список покупок`);
   };
+
+  const openShoppingItemEdit = useCallback((item) => {
+    setEditingItem(item);
+    setEditFormData({
+      name: item.name,
+      quantity: item.quantity,
+      measure: item.measure,
+      expiryDate: '',
+      category: item.category || '🏷️ Прочее'
+    });
+    setShowEditModal(true);
+  }, []);
 
   // Функция для получения информации о наличии продукта в кладовой
   const getPantryInfo = (productName) => {
@@ -3904,9 +4164,6 @@ const OlivierApp = () => {
                     </p>
                     <div className="bg-white rounded-xl p-3 border border-orange-200">
                       <div ref={tgLoginWidgetHostRef} />
-                      <p className="text-xs text-gray-500 mt-2">
-                        Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
-                      </p>
                     </div>
                     <div className="relative flex items-center gap-2 py-1">
                       <div className="h-px bg-orange-200 flex-1" />
@@ -4202,9 +4459,6 @@ const OlivierApp = () => {
                         </p>
                         <div className="bg-white rounded-xl p-3 border border-orange-200">
                           <div ref={tgLoginWidgetHostRef} />
-                          <p className="text-xs text-gray-500 mt-2">
-                            Если кнопка не появилась — проверьте в Vercel переменную <code className="text-[11px] bg-white px-1 rounded">VITE_TELEGRAM_BOT_USERNAME</code>.
-                          </p>
                         </div>
                         <div className="relative flex items-center gap-2 py-1">
                           <div className="h-px bg-orange-200 flex-1" />
@@ -4451,7 +4705,7 @@ const OlivierApp = () => {
                           )}
                           <div className="text-sm mt-1">
                             <span className="text-gray-700">
-                              {item.quantity} {item.measure}
+                              {formatQuantityForDisplay(item.quantity, item.measure)} {item.measure}
                             </span>
                             <button
                               onClick={() => handleDateClick(item)}
@@ -4483,6 +4737,7 @@ const OlivierApp = () => {
                             <ShoppingCart size={20} />
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               const product = {
                                 name: item.name,
@@ -4737,7 +4992,7 @@ const OlivierApp = () => {
                             <SwipeToDeleteRow key={item.id} className="rounded-xl" onDelete={removeShoppingItem}>
                               <div className={`p-4 ${item.completed ? 'opacity-50' : ''}`}>
                                 <div className="flex justify-between items-center">
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-3 min-w-0 flex-1">
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -4760,7 +5015,11 @@ const OlivierApp = () => {
                                     >
                                       {item.completed && <Check size={14} />}
                                     </button>
-                                    <div>
+                                    <button
+                                      type="button"
+                                      className="flex-1 min-w-0 text-left rounded-xl py-1 -my-1 pl-0 pr-2 active:bg-gray-50"
+                                      onClick={() => openShoppingItemEdit(item)}
+                                    >
                                       <div
                                         className={`font-semibold ${item.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}
                                       >
@@ -4770,25 +5029,16 @@ const OlivierApp = () => {
                                         )}
                                       </div>
                                       <div className="text-sm text-gray-600">
-                                        {item.quantity} {item.measure}
+                                        {formatQuantityForDisplay(item.quantity, item.measure)} {item.measure}
                                       </div>
-                                    </div>
+                                    </button>
                                   </div>
-                                  <div className="flex gap-2">
+                                  <div className="flex gap-2 shrink-0">
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        setEditingItem(item);
-                                        setEditFormData({
-                                          name: item.name,
-                                          quantity: item.quantity,
-                                          measure: item.measure,
-                                          expiryDate: '',
-                                          category: item.category || '🏷️ Прочее'
-                                        });
-                                        setShowEditModal(true);
-                                      }}
-                                      className="text-blue-500"
+                                      onClick={() => openShoppingItemEdit(item)}
+                                      className="text-blue-500 p-1 rounded-lg hover:bg-blue-50"
+                                      aria-label="Редактировать"
                                     >
                                       <Edit3 size={16} />
                                     </button>
@@ -4837,7 +5087,7 @@ const OlivierApp = () => {
                                 {/* Информация о наличии в кладовой */}
                                 {pantryInfo ? (
                                   <div className="text-sm text-gray-600 mt-1">
-                                    {pantryInfo.quantity} {pantryInfo.measure} • до {pantryInfo.expiryDate.toLocaleDateString('ru-RU')} ({pantryInfo.expiryStatus.days} дн.)
+                                    {formatQuantityForDisplay(pantryInfo.quantity, pantryInfo.measure)} {pantryInfo.measure} • до {pantryInfo.expiryDate.toLocaleDateString('ru-RU')} ({pantryInfo.expiryStatus.days} дн.)
                                   </div>
                                 ) : (
                                   <div className="text-sm text-gray-500 mt-1">
@@ -4984,7 +5234,7 @@ const OlivierApp = () => {
                             setShowRecipeModal(true);
                           }}
                           onAddToMyRecipes={addRecipeToMy}
-                          isFavorite={favoriteRecipes.some(fav => fav.id === recipe.id)}
+                          isFavorite={favoriteRecipes.some((fav) => recipeIdsEqual(fav.id, recipe.id))}
                         />
                       ))}
                     </div>
@@ -5036,7 +5286,7 @@ const OlivierApp = () => {
                       onEdit={editCustomRecipe}
                       onDelete={(r) => deleteCustomRecipe(r.id)}
                       deleteTitle="Удалить рецепт"
-                      isFavorite={favoriteRecipes.some(fav => fav.id === recipe.id)}
+                      isFavorite={favoriteRecipes.some((fav) => recipeIdsEqual(fav.id, recipe.id))}
                     />
                   ))}
                 </div>
@@ -5656,13 +5906,21 @@ const OlivierApp = () => {
 
                 <button
                 onClick={async () => {
+                  const step = getQuantityStep(editFormData.measure || editingItem.measure) || 1;
+                  let qSave = clampQuantityDecimals(Number(editFormData.quantity));
+                  if (!isFinite(qSave) || qSave <= 0) {
+                    qSave = clampQuantityDecimals(Number(editingItem.quantity));
+                    if (!isFinite(qSave) || qSave <= 0) qSave = step;
+                  }
+                  qSave = roundToStep(qSave, step);
+
                   if (currentTab === 'pantry') {
                     const expRaw = editFormData.expiryDate ? new Date(editFormData.expiryDate) : null;
                     const exp = expRaw && !Number.isNaN(expRaw.getTime()) ? expRaw : null;
                     if (usesCloudInventory && editingItem?.id) {
                       const { data, error } = await updateInventoryRow(editingItem.id, {
                         name: editFormData.name,
-                        quantity: Number(editFormData.quantity) || editingItem.quantity,
+                        quantity: qSave,
                         measure: editFormData.measure || editingItem.measure,
                         category: editFormData.category || editingItem.category || '🏷️ Прочее',
                         expiryDate: exp,
@@ -5680,7 +5938,7 @@ const OlivierApp = () => {
                           ? {
                               ...item,
                               name: editFormData.name,
-                              quantity: Number(editFormData.quantity) || item.quantity,
+                              quantity: qSave,
                               measure: editFormData.measure || item.measure,
                               category: editFormData.category || item.category || '🏷️ Прочее',
                               expiryDate: exp ?? item.expiryDate,
@@ -5695,7 +5953,7 @@ const OlivierApp = () => {
                         ? {
                             ...item,
                             name: editFormData.name,
-                            quantity: Number(editFormData.quantity) || item.quantity,
+                            quantity: qSave,
                             measure: editFormData.measure || item.measure,
                             category: editFormData.category || item.category || '🏷️ Прочее'
                           }
@@ -5772,7 +6030,7 @@ const OlivierApp = () => {
                   }}
                   className={`p-2 rounded-xl transition-colors ${
                     (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
-                    favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                    favoriteRecipes.some((fav) => recipeIdsEqual(fav.id, selectedRecipe.id))
                       ? 'text-red-500 bg-red-50'
                       : 'text-gray-400 hover:bg-gray-50 hover:text-red-500'
                   }`}
@@ -5782,7 +6040,7 @@ const OlivierApp = () => {
                     size={20}
                     fill={
                       (typeof selectedRecipe.id === 'string' && libraryFavoriteIds.has(selectedRecipe.id)) ||
-                      favoriteRecipes.some((fav) => fav.id === selectedRecipe.id)
+                      favoriteRecipes.some((fav) => recipeIdsEqual(fav.id, selectedRecipe.id))
                         ? 'currentColor'
                         : 'none'
                     }

@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
-/** Vite вставляет entry в <head> — в Telegram/WebView порядок должен быть: SDK → Tailwind → React. */
+/** Vite вставляет entry в <head>; плагин переносит модуль в конец body (WKWebView / PWA). */
 const moveEntryScriptToBodyEnd = () => ({
   name: 'move-entry-script-to-body-end',
   enforce: 'post',
@@ -27,7 +28,7 @@ const stripModuleCrossorigin = () => ({
 });
 
 export default defineConfig({
-  plugins: [react(), moveEntryScriptToBodyEnd(), stripModuleCrossorigin()],
+  plugins: [react(), tailwindcss(), moveEntryScriptToBodyEnd(), stripModuleCrossorigin()],
   server: {
     port: 5173
   }
